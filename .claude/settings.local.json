@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp promotion_time_cure_v2.stan inst/stan/)",
+      "Bash(cp df_datos_app.rds inst/extdata/)",
+      "Bash(\"/c/Program Files/R/R-4.4.1/bin/Rscript.exe\" -e ':*)",
+      "Bash(\"/c/Program Files/R/R-4.4.1/bin/Rscript.exe\" -e 'invisible\\(parse\\(\"\"R/toolkit.R\"\"\\)\\); cat\\(\"\"R/toolkit.R OK\\\\n\"\"\\)')",
+      "Bash(\"/c/Program Files/R/R-4.4.1/bin/Rscript.exe\" -e 'invisible\\(parse\\(\"\"R/cure_app.R\"\"\\)\\); cat\\(\"\"R/cure_app.R OK\\\\n\"\"\\)')",
+      "Bash(\"/c/Program Files/R/R-4.4.1/bin/Rscript.exe\" -e 'invisible\\(parse\\(\"\"R/data.R\"\"\\)\\); cat\\(\"\"R/data.R OK\\\\n\"\"\\)')",
+      "Bash(\"/c/Program Files/R/R-4.4.1/bin/Rscript.exe\" -e 'invisible\\(parse\\(\"\"inst/shiny/app.R\"\"\\)\\); cat\\(\"\"inst/shiny/app.R OK\\\\n\"\"\\)')",
+      "Bash(\"/c/Program Files/R/R-4.4.1/bin/Rscript.exe\" -e 'invisible\\(parse\\(\"\"app.R\"\"\\)\\); cat\\(\"\"root app.R OK\\\\n\"\"\\)')",
+      "Bash(LC_ALL=C.UTF-8 grep -nP '[^\\\\x00-\\\\x7F]' R/toolkit.R)",
+      "Bash(LC_ALL=en_US.UTF-8 grep -nP '[^\\\\x00-\\\\x7F]' R/toolkit.R)",
+      "Bash(LC_ALL=C.UTF-8 grep -nP '[^\\\\x00-\\\\x7F]' R/*.R inst/shiny/app.R app.R inst/examples/*.R)",
+      "Bash(\"/c/Program Files/R/R-4.4.1/bin/Rscript.exe\" -e 'for \\(f in c\\(\"\"R/toolkit.R\"\",\"\"R/cure_app.R\"\",\"\"R/data.R\"\",\"\"R/rgetne-package.R\"\",\"\"inst/shiny/app.R\"\",\"\"app.R\"\"\\)\\) { invisible\\(parse\\(f\\)\\); cat\\(f,\"\"OK\\\\n\"\"\\) }')",
+      "Bash(LC_ALL=C.UTF-8 grep -nP '[^\\\\x00-\\\\x7F]' R/*.R app.R inst/shiny/app.R inst/examples/*.R DESCRIPTION NAMESPACE)",
+      "Bash(python3 -c \":*)",
+      "Bash(py --version)",
+      "Bash(py -c \":*)",
+      "Bash(Rscript -e \"rmarkdown::render\\(''README.Rmd'', output_format = ''github_document'', quiet = TRUE\\)\")",
+      "Bash(cmd /c \"dir /s /b C:\\\\R-*\\\\bin\\\\Rscript.exe C:\\\\Progra~1\\\\R\\\\R-*\\\\bin\\\\Rscript.exe\")",
+      "Bash(cmd /c \"reg query HKLM\\\\SOFTWARE\\\\R-core\\\\R /v InstallPath 2>nul\")",
+      "WebFetch(domain:southnecrgetne.shinyapps.io)"
+    ]
+  }
+}

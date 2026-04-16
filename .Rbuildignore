@@ -1,0 +1,15 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^\.github$
+^\.git$
+^\.gitignore$
+^\.claude$
+^\.vscode$
+^\.idea$
+^app\.R$
+^rsconnect$
+^docs$
+^LICENSE\.md$
+^README\.Rmd$
+^deploy\.R$
+^precompute\.R$

@@ -1,0 +1,38 @@
+Package: rgetne
+Title: Bayesian Promotion Time Cure Model Toolkit and Interactive App
+Version: 0.1.0
+Authors@R:
+    person("Rocio", "Maintainer", email = "rocio@example.com", role = c("aut", "cre"))
+Description: Tools to fit Bayesian Promotion Time Cure Models
+    (Yakovlev & Tsodikov bounded cumulative hazard formulation) via
+    Stan, with support for interactions, per-variable priors,
+    identifiability diagnostics, clinically oriented visualisations,
+    and a companion interactive Shiny application. The package ships
+    an example dataset and the compiled Stan model so that the full
+    workflow can be reproduced end-to-end.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Depends:
+    R (>= 4.1.0)
+Imports:
+    rstan (>= 2.26.0),
+    shiny,
+    bslib,
+    loo,
+    bayesplot,
+    ggplot2,
+    gridExtra,
+    survival,
+    stats,
+    utils,
+    grDevices,
+    graphics,
+    parallel
+Suggests:
+    rms,
+    knitr,
+    rmarkdown
+URL: https://github.com/albertocarm/rgetne
+BugReports: https://github.com/albertocarm/rgetne/issues
+RoxygenNote: 7.3.3
+LazyData: true

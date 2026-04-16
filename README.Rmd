@@ -1,0 +1,273 @@
+---
+output: github_document
+---
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+<!-- Knit with: devtools::build_readme() or rmarkdown::render("README.Rmd") -->
+<!-- Full knit takes ~10 min (Stan MCMC + censoring test). Output is cached. -->
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse  = TRUE,
+  comment   = "#>",
+  fig.path  = "man/figures/README-",
+  out.width = "100%",
+  dpi       = 150
+)
+```
+
+# rgetne
+
+<!-- badges: start -->
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Shiny App](https://img.shields.io/badge/Shiny-online-orange)](https://southnecrgetne.shinyapps.io/rgetne/)
+<!-- badges: end -->
+
+**Bayesian Promotion Time Cure Model -- Toolkit and Interactive App**
+
+`rgetne` implements **Bayesian promotion-time cure models** (Yakovlev & Tsodikov, bounded cumulative hazard formulation) via [Stan](https://mc-stan.org/). It was developed as the reproducibility companion for the paper *Perioperative Chemotherapy and Long-Term Cure in Resected Grade 3 Gastroenteropancreatic Neuroendocrine Carcinomas: The GETNE/SOUTH-NEC Study* by the GETNE (Spanish Group of Neuroendocrine and Endocrine Tumors).
+
+*(Manuscript under review -- citation and DOI will be added upon publication.)*
+
+An interactive version of the app is available at <https://southnecrgetne.shinyapps.io/rgetne/>.
+
+---
+
+## Why a cure model?
+
+In localised cancer after curative-intent surgery, conventional Cox regression tells us *whether* a treatment improves survival but not *how*. The hazard ratio cannot distinguish between:
+
+- **Delaying recurrence** in patients who will eventually relapse (a *kinetic* effect), and
+- **Eradicating residual disease** so that a subset of patients is permanently cured (a *clonogenic* effect).
+
+The **promotion-time cure model** separates these two mechanisms. It models the unobservable number of residual tumour cell clusters (clonogenic foci) and the time each takes to produce a detectable recurrence:
+
+$$S(t \mid \mathbf{x}, \mathbf{z}) = \exp\bigl\{-\theta(\mathbf{x})\,\bigl[1 - S_0(t \mid \mathbf{z})\bigr]\bigr\}$$
+
+| Component | Meaning | What covariates tell us |
+|---|---|---|
+| **Clonogenic** $\theta(\mathbf{x})$ | Expected residual tumour burden | Which factors increase or decrease the probability of being *cured* |
+| **Kinetic** $S_0(t \mid \mathbf{z})$ | Weibull latency (speed of recurrence) | Which factors accelerate or delay relapse among *uncured* patients |
+
+The cure probability is simply $P(\text{cure}) = e^{-\theta}$: the fewer residual foci, the higher the chance that none remains viable.
+
+This package provides:
+
+- Full Bayesian estimation via HMC-NUTS (Stan)
+- Support for **interactions** (e.g. Ki-67 x treatment) and **per-variable priors**
+- **Kaplan-Meier** plots with optional stratification
+- **Descriptive data summaries** and variable distributions
+- **Identifiability diagnostics**: posterior cross-correlation, incremental censoring sensitivity
+- **Clinical plots**: cure probability vs continuous covariates, cure odds ratios, population survival curves
+- **Leave-one-out cross-validation** (LOO-IC)
+- An **interactive Shiny application** for point-and-click exploration
+
+---
+
+## Installation
+
+```r
+# install.packages("remotes")
+remotes::install_github("albertocarm/rgetne")
+```
+
+**Requirements:** R >= 4.1, a working C++ toolchain (for Stan), and the dependencies declared in DESCRIPTION (`rstan` >= 2.26, `shiny`, `bslib`, `survival`, `loo`, `bayesplot`, `ggplot2`, `gridExtra`).
+
+---
+
+## Quick start: interactive app
+
+```r
+library(rgetne)
+cure()
+```
+
+This launches the Shiny application in your browser. The app auto-loads a bundled example dataset (stage I--III GEP-NEC from the GETNE registry), lets you select covariates, add interactions, run the Stan sampler, and browse all results.
+
+---
+
+## Full worked example
+
+### 1. Load and preprocess data
+
+```{r load-data}
+library(rgetne)
+
+dat <- prep_data(readRDS(example_data()))
+cat(sprintf("n = %d patients, %d events (%.0f%%)\n",
+            nrow(dat), sum(dat$.status_bin),
+            100 * mean(dat$.status_bin)))
+```
+
+### 2. Descriptive statistics
+
+```{r descriptives}
+data_summary_table(dat)
+```
+
+### 3. Ki-67 distribution
+
+```{r hist-ki67, fig.height=4, fig.width=6}
+hist(dat$ki67_percent, breaks = 20,
+     col = "#4A90D9", border = "white",
+     main = "Ki-67 proliferation index",
+     xlab = "Ki-67 (%)", ylab = "Frequency")
+```
+
+### 4. Kaplan-Meier curves
+
+```{r km-overall, fig.height=5, fig.width=7}
+plot_km(dat, title = "Event-free survival (overall)")
+```
+
+```{r km-treatment, fig.height=5, fig.width=7}
+plot_km(dat,
+        strata = "periop_therapy",
+        title  = "Event-free survival by perioperative therapy")
+```
+
+```{r km-stage, fig.height=5, fig.width=7}
+plot_km(dat,
+        strata = "stage_III",
+        title  = "Event-free survival by stage III")
+```
+
+### 5. Define and fit the cure model
+
+```{r fit-model, message=FALSE, results='hide'}
+mod <- cure_model(
+  dat,
+  clonogenic = ~ primary_surgery_yes + stage_II + stage_III +
+                 site_colorectal + ki67_percent * periop_therapy,
+  kinetic    = ~ ki67_percent + periop_therapy,
+  prior_clonogenic = 2.5,
+  prior_kinetic    = 0.25,
+  prior_intercept  = 2.5
+)
+
+cfit <- fit_model(mod, chains = 4, iter = 4000, warmup = 1000,
+                  adapt_delta = 0.95)
+```
+
+### 6. MCMC diagnostics
+
+```{r mcmc-checks}
+mcmc_checks(cfit)
+```
+
+### 7. Coefficient summary
+
+```{r summary-coefs}
+summary_coefs(cfit)
+```
+
+### 8. Leave-one-out cross-validation
+
+```{r loo}
+loo_fit(cfit)
+```
+
+### 9. Identifiability diagnostics
+
+```{r correlation}
+test_correlation(cfit)
+```
+
+```{r censoring, message=FALSE, results='hide'}
+test_censoring(cfit, chains = 2, iter = 1000)
+```
+
+### 10. Contrasts (interactions supported)
+
+```{r contrasts}
+cure_contrast(cfit, "clonogenic",
+              var    = "periop_therapy",
+              levels = list(periop_therapy = 1),
+              ref    = list(periop_therapy = 0),
+              at     = list(ki67_percent = c(30, 50, 70, 90)))
+```
+
+### 11. Clinical plots
+
+```{r plot-cure-ref, fig.height=4, fig.width=10}
+plot_continuous_effect(cfit, x_var = "ki67_percent",
+                       fix = list(periop_therapy = 0),
+                       xlab = "Ki-67 (%)")
+```
+
+```{r plot-cure-trt, fig.height=4, fig.width=10}
+plot_continuous_effect(cfit, x_var = "ki67_percent",
+                       fix = list(periop_therapy = 1),
+                       xlab = "Ki-67 (%)")
+```
+
+```{r plot-or, fig.height=5, fig.width=12}
+plot_contrast_cure_or(
+  cfit,
+  var    = "periop_therapy",
+  levels = list(periop_therapy = 1),
+  ref    = list(periop_therapy = 0),
+  at_var = "ki67_percent",
+  at_seq = seq(25, 95, by = 5),
+  xlab   = "Ki-67 (%)",
+  title  = "Cure OR: perioperative therapy vs none")
+```
+
+```{r plot-surv, fig.height=5, fig.width=7}
+plot_surv_curve(cfit)
+```
+
+---
+
+## Data requirements
+
+`prep_data()` transforms raw registry data into the model-ready format:
+
+| Raw column | Transformed | Description |
+|---|---|---|
+| `time_efs` | `EFS_time` | Event-free survival time (years) |
+| `event_status` | `.status_bin` | 1 = event, 0 = censored |
+| `primary_surgery` (Yes/No) | `primary_surgery_yes` | Primary surgery performed |
+| `disease_stage` (I/II/III) | `stage_II`, `stage_III` | Disease stage dummies (ref: stage I) |
+| `primary_site` (Colorectal/Other/Pancreas) | `site_colorectal`, `site_pancreas` | Primary site dummies (ref: Other) |
+| `ki67_percent` | `ki67_percent` | Ki-67 proliferation index (0--100) |
+| `periop_therapy` (0/1) | `periop_therapy` | Received perioperative chemotherapy |
+
+You can upload your own `.rds` file through the Shiny app's Data panel, provided it contains these columns (or their pre-transformed equivalents).
+
+---
+
+## Package functions
+
+| Function | Description |
+|---|---|
+| `cure()` / `cure_app()` | Launch the interactive Shiny application |
+| `prep_data()` | Preprocess raw data for modelling |
+| `cure_model()` | Define model specification (formulas + priors) |
+| `fit_model()` | Fit the model via Stan HMC-NUTS |
+| `mcmc_checks()` | MCMC convergence diagnostics (R-hat, ESS, divergences) |
+| `summary_coefs()` | Posterior coefficient summary on the original scale |
+| `loo_fit()` | Leave-one-out cross-validation |
+| `cure_contrast()` | Compute scenario contrasts with credible intervals |
+| `test_correlation()` | Posterior cross-correlation between sub-models |
+| `test_censoring()` | Incremental censoring sensitivity test |
+| `plot_km()` | Kaplan-Meier survival curves (optionally stratified) |
+| `plot_continuous_effect()` | Triptych: clonogenic load, cure rate, median failure time |
+| `plot_contrast_cure_or()` | Cure odds ratio across a continuous modifier |
+| `plot_surv_curve()` | Population survival curve from the cure model |
+| `data_summary_table()` | Descriptive statistics table |
+| `example_data()` / `stan_model_file()` | Paths to bundled assets |
+
+---
+
+## Citation
+
+> *Manuscript under review.* Full citation and DOI will be added upon publication.
+
+> rgetne: Bayesian Promotion Time Cure Model Toolkit (R package). https://github.com/albertocarm/rgetne
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE).
