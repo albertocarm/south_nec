@@ -54,7 +54,8 @@ The cure probability is simply $P(\text{cure}) = e^{-\theta}$: the fewer residua
 This package provides:
 
 - Full Bayesian estimation via HMC-NUTS (Stan)
-- Support for **interactions** (e.g. Ki-67 x treatment) and **per-variable priors**
+- Support for **interactions** (e.g. Ki-67 x treatment) and **per-variable priors on a common, standardised scale** (see [Per-variable priors](#per-variable-priors-and-predictor-scaling))
+- **Marginal predictive effects** via `posterior_epred_cure()` on arbitrary clinical-scale `newdata`
 - **Kaplan-Meier** plots with optional stratification
 - **Descriptive data summaries** and variable distributions
 - **Identifiability diagnostics**: posterior cross-correlation, incremental censoring sensitivity
@@ -237,14 +238,108 @@ You can upload your own `.rds` file through the Shiny app's Data panel, provided
 
 ---
 
+## Per-variable priors and predictor scaling
+
+When predictors live on wildly different scales (e.g. Ki-67 in 0--100 % next to a 0/1 binary) a single shared prior SD cannot be informative for all of them. The legacy entry point `cure_model()` standardises the design matrix internally before sampling, which means a prior SD of 1 is applied to the scaled coefficients and its practical meaning depends on the SD of every covariate. The newer pipeline makes scaling and priors explicit and per-variable.
+
+### The preprocessing helpers
+
+`escalar_continua(x, metodo)` scales a single vector:
+
+* continuous inputs are centred and divided by `2 * SD` (`metodo = "gelman"`, default) or by one `SD` (`metodo = "zscore"`),
+* binary and categorical inputs are returned unchanged,
+* the original mean and scale divisor are attached as attributes so the transformation can be reproduced on new data.
+
+`preprocess_predictors(data, predictors, metodo)` applies `escalar_continua()` to every column listed in `predictors` (the response is never touched) and returns the transformed `data.frame` plus the `center` / `scale` vectors of every continuous predictor.
+
+```{r preprocess-example, eval=FALSE}
+pp <- preprocess_predictors(dat,
+                            predictors = c("ki67_percent", "stage_II",
+                                           "stage_III", "site_colorectal",
+                                           "periop_therapy"),
+                            metodo     = "gelman")
+
+head(pp$data[, c("ki67_percent", "stage_II", "periop_therapy")])  # scaled / 0-1
+pp$center["ki67_percent"]   # original mean
+pp$scale ["ki67_percent"]   # 2 * SD
+```
+
+### Fitting with `fit_cure_bayes()`
+
+`fit_cure_bayes()` wires preprocessing, per-variable priors and Stan together. Priors can be a scalar (shared across every coefficient), a positional numeric vector, or a named list, where each name is grep-matched against the design-matrix columns (main effects *and* interactions):
+
+```{r fit-bayes-priors, eval=FALSE}
+cfit <- fit_cure_bayes(
+  data       = dat,
+  clonogenic = ~ primary_surgery_yes + stage_II + stage_III +
+                 site_colorectal + ki67_percent * periop_therapy,
+  kinetic    = ~ ki67_percent + periop_therapy,
+  metodo     = "gelman",
+
+  # One prior SD per variable, on the STANDARDISED scale.
+  # Continuous (Gelman-scaled) coefficients at N(0, 1);
+  # binary/categorical at N(0, 2.5); tight ridge on the interaction.
+  prior_clonogenic = list(
+    ki67_percent                    = 1.0,
+    primary_surgery_yes             = 2.5,
+    stage_II                        = 2.5,
+    stage_III                       = 2.5,
+    site_colorectal                 = 2.5,
+    periop_therapy                  = 2.5,
+    "ki67_percent:periop_therapy"   = 0.5   # regularise the interaction
+  ),
+  prior_kinetic = list(
+    ki67_percent   = 0.5,
+    periop_therapy = 1.0
+  ),
+  prior_intercept = 2.5,
+
+  chains = 4, iter = 4000, warmup = 1000, adapt_delta = 0.95
+)
+```
+
+When `prior_clonogenic` or `prior_kinetic` is left at its default (`NULL`), `fit_cure_bayes()` builds a weakly-informative vector automatically: `N(0, 1)` for coefficients of standardised continuous predictors and `N(0, 2.5)` for binary / categorical ones.
+
+### Marginal predictive effects
+
+The fitted object stores the scaling metadata at `cfit$spec$scaling`, which lets `posterior_epred_cure()` project an arbitrary `newdata` on the **original clinical scale** into the same standardised space, compute the posterior linear predictor, and return one of the four quantities `"cure_prob"`, `"theta"`, `"lambda"`, `"median_time"` as a `n_draws x n_rows` matrix.
+
+```{r epred-example, eval=FALSE}
+newdata <- expand.grid(
+  ki67_percent        = seq(5, 90, by = 5),   # clinical scale
+  periop_therapy      = c(0, 1),
+  primary_surgery_yes = 1,
+  stage_II            = 0,
+  stage_III           = 0,
+  site_colorectal     = 0
+)
+
+cure_draws <- posterior_epred_cure(cfit, newdata, type = "cure_prob")
+summary_tbl <- summarize_epred(cure_draws)    # median + 95% CrI per row
+head(summary_tbl)
+```
+
+The returned `summary_tbl` carries back the original-scale `newdata` so the estimates can be plotted directly against clinical values (e.g. Ki-67 in %) without manual back-transformation.
+
+### Interactive counterpart
+
+The same inputs are exposed in the Shiny app under the sidebar panels `"Clonogenic Model"` and `"Kinetic Model"` (one numeric input per selected variable) and in the new tab `"Marginal effects"`, which wraps `posterior_epred_cure()` + `summarize_epred()` with a 95% credible ribbon.
+
+---
+
 ## Package functions
 
 | Function | Description |
 |---|---|
 | `cure()` / `cure_app()` | Launch the interactive Shiny application |
 | `prep_data()` | Preprocess raw data for modelling |
-| `cure_model()` | Define model specification (formulas + priors) |
-| `fit_model()` | Fit the model via Stan HMC-NUTS |
+| `escalar_continua()` | Scale a continuous vector (Gelman or Z-score); leaves binary / categorical inputs untouched |
+| `preprocess_predictors()` | Apply `escalar_continua()` to predictor columns only and record the original mean / scale of every continuous predictor |
+| `cure_model()` | Define a model specification (formulas + priors); `scale = FALSE` skips the internal standardisation |
+| `fit_model()` | Fit a specification via Stan HMC-NUTS |
+| `fit_cure_bayes()` | End-to-end wrapper: preprocess predictors, build weakly-informative per-variable priors, fit Stan and attach the scaling metadata |
+| `posterior_epred_cure()` | Posterior expected prediction on clinical-scale `newdata` (`cure_prob`, `theta`, `lambda`, `median_time`) |
+| `summarize_epred()` | Collapse a draws x rows prediction matrix into median, mean and credible interval |
 | `mcmc_checks()` | MCMC convergence diagnostics (R-hat, ESS, divergences) |
 | `summary_coefs()` | Posterior coefficient summary on the original scale |
 | `loo_fit()` | Leave-one-out cross-validation |

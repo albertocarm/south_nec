@@ -426,7 +426,15 @@ server <- function(input, output, session) {
                          precomputed = FALSE, me_res = NULL)
 
   # --- Per-variable prior UI -------------------------------------------------
-  default_prior_for_var <- function(v) if (v %in% CONTINUOUS_VARS) 1.0 else 2.5
+  # Shiny rejects input IDs containing ":" (interpreted as a type separator),
+  # so interaction terms like "ki67_percent:periop_therapy" are sanitised to
+  # "ki67_percent__x__periop_therapy" for the ID while the original name is
+  # preserved as label and as the key of the prior list passed to Stan.
+  safe_id  <- function(v) gsub(":", "__x__", v, fixed = TRUE)
+  default_prior_for_var <- function(v) {
+    parts <- strsplit(v, ":", fixed = TRUE)[[1]]
+    if (any(parts %in% CONTINUOUS_VARS)) 1.0 else 2.5
+  }
 
   build_prior_inputs <- function(id_prefix, selected_vars,
                                  interaction_term = NULL) {
@@ -434,16 +442,16 @@ server <- function(input, output, session) {
       return(helpText("Select at least one main effect."))
     }
     rows <- lapply(selected_vars, function(v) {
-      numericInput(paste0(id_prefix, v),
+      numericInput(paste0(id_prefix, safe_id(v)),
                    label = v,
                    value = default_prior_for_var(v),
                    step  = 0.1, min = 0.01)
     })
     if (!is.null(interaction_term)) {
       rows <- c(rows,
-                list(numericInput(paste0(id_prefix, interaction_term),
+                list(numericInput(paste0(id_prefix, safe_id(interaction_term)),
                                   label = interaction_term,
-                                  value = 1.0,
+                                  value = default_prior_for_var(interaction_term),
                                   step  = 0.1, min = 0.01)))
     }
     do.call(tagList, rows)
@@ -473,7 +481,7 @@ server <- function(input, output, session) {
     terms <- c(selected_vars, interaction_term)
     out <- list()
     for (v in terms) {
-      val <- input[[paste0(id_prefix, v)]]
+      val <- input[[paste0(id_prefix, safe_id(v))]]
       if (!is.null(val) && is.numeric(val) && val > 0) out[[v]] <- val
     }
     out
