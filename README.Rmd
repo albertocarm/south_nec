@@ -133,6 +133,52 @@ plot_km(dat,
         title  = "Event-free survival by stage III")
 ```
 
+`plot_km()` also supports interaction exploration out of the box on the
+publication dataset (`publication_data()`), which ships the factor-coded
+variables used throughout the manuscript. Stratify by one covariate, facet
+by a second and restrict the analysis to a subset in a single call:
+
+```{r km-facet, eval=FALSE}
+pub <- readRDS(publication_data())
+
+# One panel per tumour site, coloured by perioperative chemotherapy.
+plot_km(pub,
+        time_col   = "EFS_Time", status_col = "EFS_Status",
+        strata     = "Perioperative_Chemo",
+        facet_by   = "Site_4_Groups",
+        title      = "EFS by site and perioperative chemotherapy")
+
+# Same but restricted to colon and pancreas, split by TNM stage.
+plot_km(pub,
+        time_col      = "EFS_Time", status_col = "EFS_Status",
+        strata        = "TNM_Stage",
+        facet_by      = "Site_4_Groups",
+        filter_var    = "Site_4_Groups",
+        filter_values = c("Colon", "Pancreas"))
+```
+
+### 4b. Multivariable Cox models with forest plots and a combined gt table
+
+The `cox_*` helpers fit a multivariable `rms::cph()` model and build a
+publication-ready forest plot and a side-by-side gt table for both endpoints
+(Event-Free and Overall Survival):
+
+```{r cox-dual, eval=FALSE}
+pub  <- readRDS(publication_data())
+vars <- c("Sex", "TNM_Stage", "Primary_Surgery", "Site_4_Groups",
+          "Ki67_Index", "Perioperative_Chemo", "ECOG_PS")
+
+res <- cox_dual_endpoint(pub, vars)
+res$plot_efs   # ggplot forest plot, EFS
+res$plot_os    # ggplot forest plot, OS
+res$table      # gt combined HR (95% CI) + p-value table
+```
+
+The same workflow is exposed in the Shiny app under the **Cox models** tab
+(covariate multi-select, forest plots and combined gt table) and the
+redesigned **Kaplan-Meier** tab (outcome selector, stratification, faceting,
+subset filter and log-rank p-values per panel).
+
 ### 5. Define and fit the cure model
 
 ```{r fit-model, message=FALSE, results='hide'}
@@ -346,7 +392,10 @@ The same inputs are exposed in the Shiny app under the sidebar panels `"Clonogen
 | `cure_contrast()` | Compute scenario contrasts with credible intervals |
 | `test_correlation()` | Posterior cross-correlation between sub-models |
 | `test_censoring()` | Incremental censoring sensitivity test |
-| `plot_km()` | Kaplan-Meier survival curves (optionally stratified) |
+| `plot_km()` | Kaplan-Meier survival curves (stratify, facet, subset, log-rank p) |
+| `cox_multivar_fit()` / `cox_forest_plot()` / `cox_combined_table()` | Multivariable Cox model, forest plot and publication gt table |
+| `cox_dual_endpoint()` | One-shot wrapper: fit EFS + OS, build both forests and the combined table |
+| `publication_data()` | Path to the factor-coded publication dataset used by the KM and Cox tabs |
 | `plot_continuous_effect()` | Triptych: clonogenic load, cure rate, median failure time |
 | `plot_contrast_cure_or()` | Cure odds ratio across a continuous modifier |
 | `plot_surv_curve()` | Population survival curve from the cure model |

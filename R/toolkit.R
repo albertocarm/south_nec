@@ -40,6 +40,28 @@ example_data <- function() {
 }
 
 # =============================================================================
+#' Path to the publication dataset (English factor labels)
+#'
+#' Returns the path to `dataset_publicacion_english.rds` bundled under
+#' `inst/extdata/`. This dataset contains the original factor-coded
+#' variables (`EFS_Time`, `EFS_Status`, `OS_Time`, `OS_Status`, `Sex`,
+#' `TNM_Stage`, `Primary_Surgery`, `Site_4_Groups`, `Ki67_Index`,
+#' `Perioperative_Chemo`, `ECOG_PS`) used by the Cox multivariable tab
+#' and the Kaplan-Meier exploration tab of the Shiny app.
+#'
+#' @return Character path. Errors if the file is not installed.
+#' @export
+publication_data <- function() {
+  p <- system.file("extdata", "dataset_publicacion_english.rds",
+                   package = "rgetne")
+  if (!nzchar(p)) {
+    stop("Publication dataset not found. Place ",
+         "'dataset_publicacion_english.rds' in inst/extdata/ and reinstall.")
+  }
+  p
+}
+
+# =============================================================================
 #' Load an RDS dataset with an EFS_time column
 #'
 #' Reads the file and runs it through [prep_data()] so that raw column names
@@ -1055,60 +1077,181 @@ plot_contrast_cure_or <- function(cfit, var, levels, ref,
 }
 
 # =============================================================================
-#' Kaplan-Meier survival curve
+#' Kaplan-Meier survival curve (ggplot2, with stratification and faceting)
 #'
-#' Draws a Kaplan-Meier curve from the preprocessed data. Optionally
-#' stratifies by a grouping variable. Uses the `survival` package
-#' internally.
+#' Draws a Kaplan-Meier curve from a data frame containing a time and an
+#' event-status column. Supports (i) stratification by one variable (colour
+#' groups within each panel), (ii) faceting by a second variable (one panel
+#' per level), and (iii) an optional subset filter so a panel can be built
+#' for a single tumour site or stage. Log-rank p-values are added per panel
+#' when at least two strata are present.
 #'
-#' @param dat      A `data.frame` produced by [prep_data()] (must contain
-#'                 `EFS_time` and `.status_bin`).
-#' @param strata   Optional character: name of a binary (0/1) column in `dat`
-#'                 to stratify the plot (e.g. `"periop_therapy"`).
-#' @param time_max Maximum time to display on the x-axis (default: observed
-#'                 maximum).
-#' @param xlab     X-axis label.
-#' @param ylab     Y-axis label.
-#' @param title    Plot title.
-#' @param cols     Colours for the strata (length 2 when stratified).
-#' @return Invisible `survfit` object.
+#' @param dat A `data.frame`. Works with the classical preprocessed layout
+#'   (`EFS_time`, `.status_bin`) or with arbitrary column names via
+#'   `time_col` / `status_col`.
+#' @param time_col,status_col Column names for follow-up time and event
+#'   indicator. Defaults preserve backwards compatibility with [prep_data()].
+#' @param strata   Optional character: name of a column to stratify the
+#'   curves (colour legend within each panel).
+#' @param facet_by Optional character: name of a column whose levels define
+#'   the facet grid (one panel per level). May be the same as `strata`.
+#' @param filter_var,filter_values Optional column name and set of values to
+#'   restrict the dataset before plotting. Useful for "tumour site = Colon"
+#'   type explorations.
+#' @param time_max Maximum time to display on the x-axis (default: observed).
+#' @param xlab,ylab,title Axis and title labels.
+#' @param palette Optional character vector of colours for the strata.
+#' @return A `ggplot` object (invisible in interactive sessions).
 #' @export
 plot_km <- function(dat,
-                    strata   = NULL,
-                    time_max = NULL,
-                    xlab     = "Time (years)",
-                    ylab     = "Event-free survival",
-                    title    = "Kaplan-Meier estimate",
-                    cols     = c("#1B4F8A", "#B8372E")) {
+                    strata        = NULL,
+                    facet_by      = NULL,
+                    filter_var    = NULL,
+                    filter_values = NULL,
+                    time_col      = NULL,
+                    status_col    = NULL,
+                    time_max      = NULL,
+                    xlab          = "Time (years)",
+                    ylab          = "Event-free survival",
+                    title         = "Kaplan-Meier estimate",
+                    palette       = NULL) {
 
-  if (!all(c("EFS_time", ".status_bin") %in% names(dat)))
-    stop("dat must contain 'EFS_time' and '.status_bin' (use prep_data()).")
-
-  opar <- par(mar = c(5, 4, 3, 1))
-  on.exit(par(opar), add = TRUE)
-
-  surv_obj <- survival::Surv(dat$EFS_time, dat$.status_bin)
-
-  if (!is.null(strata) && strata %in% names(dat)) {
-    grp <- factor(dat[[strata]], levels = c(0, 1),
-                  labels = c(paste0(strata, " = 0"),
-                             paste0(strata, " = 1")))
-    sf <- survival::survfit(surv_obj ~ grp)
-    xlim <- if (!is.null(time_max)) c(0, time_max) else NULL
-
-    plot(sf, col = cols, lwd = 2, xlim = xlim,
-         xlab = xlab, ylab = ylab, main = title,
-         mark.time = TRUE)
-    legend("topright", legend = levels(grp), col = cols, lwd = 2, bty = "n")
-  } else {
-    sf <- survival::survfit(surv_obj ~ 1)
-    xlim <- if (!is.null(time_max)) c(0, time_max) else NULL
-
-    plot(sf, col = cols[1], lwd = 2, xlim = xlim,
-         xlab = xlab, ylab = ylab, main = title,
-         mark.time = TRUE)
+  if (!requireNamespace("ggplot2", quietly = TRUE)) {
+    stop("Package 'ggplot2' is required.")
   }
-  invisible(sf)
+
+  if (is.null(time_col)) {
+    time_col <- if ("EFS_time" %in% names(dat)) "EFS_time"
+                else if ("EFS_Time" %in% names(dat)) "EFS_Time"
+                else stop("Unable to find a time column; pass time_col.")
+  }
+  if (is.null(status_col)) {
+    status_col <- if (".status_bin" %in% names(dat)) ".status_bin"
+                  else if ("EFS_Status" %in% names(dat)) "EFS_Status"
+                  else stop("Unable to find a status column; pass status_col.")
+  }
+
+  d <- dat
+  if (!is.null(filter_var) && filter_var %in% names(d) &&
+      length(filter_values) > 0) {
+    d <- d[as.character(d[[filter_var]]) %in% as.character(filter_values),
+           , drop = FALSE]
+  }
+  d <- d[!is.na(d[[time_col]]) & d[[time_col]] >= 0, , drop = FALSE]
+  if (nrow(d) == 0) stop("No observations left after filtering.")
+
+  d$..time..   <- as.numeric(d[[time_col]])
+  d$..status.. <- as.integer(d[[status_col]])
+
+  has_strata <- !is.null(strata) && strata %in% names(d)
+  has_facet  <- !is.null(facet_by) && facet_by %in% names(d)
+
+  build_curve <- function(df, group_col) {
+    so <- survival::Surv(df$..time.., df$..status..)
+    if (is.null(group_col)) {
+      sf <- survival::survfit(so ~ 1)
+      data.frame(
+        time  = c(0, sf$time),
+        surv  = c(1, sf$surv),
+        cens  = c(FALSE, sf$n.censor > 0),
+        group = "Overall",
+        stringsAsFactors = FALSE
+      )
+    } else {
+      g <- factor(df[[group_col]])
+      sf <- survival::survfit(so ~ g)
+      strata_lengths <- sf$strata
+      grp_labels <- sub("^g=", "", names(strata_lengths))
+      grp_vec <- rep(grp_labels, times = unname(strata_lengths))
+      out <- data.frame(
+        time  = sf$time,
+        surv  = sf$surv,
+        cens  = sf$n.censor > 0,
+        group = grp_vec,
+        stringsAsFactors = FALSE
+      )
+      # Prepend (0, 1) for each stratum so curves start at the top-left.
+      starts <- do.call(rbind, lapply(split(out, out$group), function(z) {
+        data.frame(time = 0, surv = 1, cens = FALSE,
+                   group = z$group[1], stringsAsFactors = FALSE)
+      }))
+      rbind(starts, out)
+    }
+  }
+
+  logrank_p <- function(df, group_col) {
+    g <- df[[group_col]]
+    if (length(unique(g[!is.na(g)])) < 2L) return(NA_real_)
+    fit <- tryCatch(
+      survival::survdiff(survival::Surv(df$..time.., df$..status..) ~ g),
+      error = function(e) NULL)
+    if (is.null(fit)) return(NA_real_)
+    dfr <- length(fit$n) - 1L
+    stats::pchisq(fit$chisq, dfr, lower.tail = FALSE)
+  }
+
+  if (has_facet) {
+    panels <- split(d, d[[facet_by]], drop = TRUE)
+    curves <- do.call(rbind, lapply(names(panels), function(lv) {
+      cur <- build_curve(panels[[lv]], if (has_strata) strata else NULL)
+      cur$facet <- lv
+      cur
+    }))
+    p_lbl_df <- data.frame(
+      facet = names(panels),
+      label = vapply(names(panels), function(lv) {
+        if (!has_strata) return("")
+        pv <- logrank_p(panels[[lv]], strata)
+        if (is.na(pv)) "" else paste0("log-rank p ", .fmt_p(pv))
+      }, character(1)),
+      stringsAsFactors = FALSE
+    )
+  } else {
+    curves <- build_curve(d, if (has_strata) strata else NULL)
+    curves$facet <- "all"
+    p_lbl_df <- data.frame(
+      facet = "all",
+      label = if (has_strata) {
+        pv <- logrank_p(d, strata)
+        if (is.na(pv)) "" else paste0("log-rank p ", .fmt_p(pv))
+      } else "",
+      stringsAsFactors = FALSE
+    )
+  }
+
+  xlim_r <- if (!is.null(time_max) && time_max > 0) c(0, time_max)
+            else c(0, max(curves$time, na.rm = TRUE))
+
+  g <- ggplot2::ggplot(
+        curves,
+        ggplot2::aes(x = .data$time, y = .data$surv, color = .data$group)) +
+    ggplot2::geom_step(linewidth = 0.9) +
+    ggplot2::geom_point(
+      data = curves[curves$cens, , drop = FALSE],
+      shape = 3, size = 2, show.legend = FALSE) +
+    ggplot2::coord_cartesian(xlim = xlim_r, ylim = c(0, 1)) +
+    ggplot2::labs(x = xlab, y = ylab, title = title, color = strata) +
+    ggplot2::theme_classic(base_size = 12) +
+    ggplot2::theme(
+      plot.title    = ggplot2::element_text(hjust = 0.5, face = "bold"),
+      legend.position = if (has_strata) "bottom" else "none")
+
+  if (!is.null(palette)) {
+    g <- g + ggplot2::scale_color_manual(values = palette)
+  }
+  if (has_facet) {
+    g <- g + ggplot2::facet_wrap(~ facet)
+  }
+  if (any(nzchar(p_lbl_df$label))) {
+    g <- g + ggplot2::geom_text(
+      data = p_lbl_df[nzchar(p_lbl_df$label), , drop = FALSE],
+      ggplot2::aes(x = xlim_r[1] + diff(xlim_r) * 0.02,
+                   y = 0.08,
+                   label = .data$label),
+      inherit.aes = FALSE, hjust = 0, size = 3.3, color = "grey25")
+  }
+
+  g
 }
 
 # =============================================================================

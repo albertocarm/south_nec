@@ -237,19 +237,66 @@ ui <- page_sidebar(
       "Kaplan-Meier",
       layout_sidebar(
         sidebar = sidebar(
-          width = 280,
+          width = 300,
           h5("KM Settings"),
-          selectInput("km_strata", "Stratify by:",
-                      choices  = c("None", BINARY_VARS),
-                      selected = "periop_therapy"),
-          numericInput("km_tmax", "Max time (leave blank for full range):",
+          helpText(
+            style = "font-size:0.82em; color:#555;",
+            "Uses the publication dataset (factor-coded).",
+            "Stratify, facet and filter to explore interactions."),
+          selectInput("km_outcome", "Outcome:",
+                      choices = c("Event-Free Survival" = "EFS",
+                                  "Overall Survival"    = "OS"),
+                      selected = "EFS"),
+          selectInput("km_strata", "Stratify by (colour):",
+                      choices = "None", selected = "None"),
+          selectInput("km_facet", "Facet by (panels):",
+                      choices = "None", selected = "None"),
+          selectInput("km_filter_var", "Restrict to a subset of:",
+                      choices = "None", selected = "None"),
+          uiOutput("km_filter_levels_ui"),
+          numericInput("km_tmax", "Max time (blank = full range):",
                        value = NA, min = 0, step = 1),
           actionButton("km_btn", "Plot Kaplan-Meier",
                        class = "btn-info", width = "100%")
         ),
         card(
-          card_header("Kaplan-Meier estimate of event-free survival"),
-          plotOutput("km_plot", height = "480px")
+          card_header(textOutput("km_card_title")),
+          plotOutput("km_plot", height = "520px")
+        )
+      )
+    ),
+
+    # -------------------------------------------------------------------------
+    nav_panel(
+      "Cox models",
+      layout_sidebar(
+        sidebar = sidebar(
+          width = 320,
+          h5("Cox multivariable"),
+          helpText(
+            style = "font-size:0.82em; color:#555;",
+            "Fits a multivariable Cox model on the publication dataset for",
+            "both EFS and OS, builds forest plots and a combined gt table."),
+          uiOutput("cox_vars_ui"),
+          actionButton("cox_btn", "Fit EFS + OS",
+                       class = "btn-success", width = "100%")
+        ),
+        navset_card_underline(
+          nav_panel(
+            "Forest plots",
+            layout_columns(
+              col_widths = c(6, 6),
+              card(card_header("Event-Free Survival"),
+                   plotOutput("cox_plot_efs", height = "440px")),
+              card(card_header("Overall Survival"),
+                   plotOutput("cox_plot_os",  height = "440px"))
+            )
+          ),
+          nav_panel(
+            "Combined table",
+            card(card_header("Multivariable Cox Models (EFS + OS)"),
+                 gt::gt_output("cox_table"))
+          )
         )
       )
     ),
@@ -418,7 +465,41 @@ ui <- page_sidebar(
 server <- function(input, output, session) {
 
   rval <- reactiveValues(data = NULL, cfit = NULL, cens_out = NULL,
-                         precomputed = FALSE, me_res = NULL)
+                         precomputed = FALSE, me_res = NULL,
+                         pub = NULL, cox_res = NULL)
+
+  # --- Publication dataset (factor-coded) ------------------------------------
+  # Used by the Kaplan-Meier exploration tab and the Cox multivariable tab.
+  # Loaded lazily from inst/extdata/dataset_publicacion_english.rds.
+  observe({
+    if (!is.null(rval$pub)) return()
+    pub_path <- tryCatch(publication_data(), error = function(e) NULL)
+    if (is.null(pub_path) || !file.exists(pub_path)) return()
+    tryCatch({
+      rval$pub <- readRDS(pub_path)
+    }, error = function(e) {
+      showNotification(paste("Could not load publication dataset:", e$message),
+                       type = "warning")
+    })
+  })
+
+  pub_factor_vars <- reactive({
+    df <- rval$pub; req(df)
+    keep <- vapply(df, function(x) {
+      is.factor(x) || is.character(x) ||
+        (is.numeric(x) && length(unique(stats::na.omit(x))) <= 6)
+    }, logical(1))
+    drop <- c("EFS_Time", "EFS_Status", "OS_Time", "OS_Status",
+              "Ki67_Index", "Ki67_Percent")
+    setdiff(names(df)[keep], drop)
+  })
+
+  pub_model_vars <- reactive({
+    df <- rval$pub; req(df)
+    candidates <- c("Sex", "TNM_Stage", "Primary_Surgery", "Site_4_Groups",
+                    "Ki67_Index", "Perioperative_Chemo", "ECOG_PS")
+    intersect(candidates, names(df))
+  })
 
   # --- Per-variable prior UI -------------------------------------------------
   # Shiny rejects input IDs containing ":" (interpreted as a type separator),
@@ -586,21 +667,119 @@ server <- function(input, output, session) {
          main = "EFS time", xlab = "Time (years)", ylab = "Frequency")
   })
 
-  # --- Kaplan-Meier -----------------------------------------------------------
-  km_state <- reactiveValues(sf = NULL)
+  # --- Kaplan-Meier (publication dataset) ------------------------------------
+  km_state <- reactiveValues(triggered = FALSE)
 
-  observeEvent(input$km_btn, {
-    req(rval$data)
-    km_state$sf <- TRUE
+  observe({
+    req(rval$pub)
+    choices <- c("None", pub_factor_vars())
+    updateSelectInput(session, "km_strata",     choices = choices,
+                      selected = isolate(input$km_strata)     %||% "None")
+    updateSelectInput(session, "km_facet",      choices = choices,
+                      selected = isolate(input$km_facet)      %||% "None")
+    updateSelectInput(session, "km_filter_var", choices = choices,
+                      selected = isolate(input$km_filter_var) %||% "None")
+  })
+
+  output$km_filter_levels_ui <- renderUI({
+    v <- input$km_filter_var
+    if (is.null(v) || v == "None" || is.null(rval$pub)) return(NULL)
+    lv <- sort(unique(as.character(rval$pub[[v]])))
+    selectInput("km_filter_levels", paste("Levels of", v, "to keep:"),
+                choices = lv, selected = lv, multiple = TRUE)
+  })
+
+  observeEvent(input$km_btn, { km_state$triggered <- TRUE })
+
+  output$km_card_title <- renderText({
+    if (isTRUE(km_state$triggered) && !is.null(input$km_outcome)) {
+      if (input$km_outcome == "OS") "Kaplan-Meier \u2014 Overall Survival"
+      else "Kaplan-Meier \u2014 Event-Free Survival"
+    } else "Kaplan-Meier estimate"
   })
 
   output$km_plot <- renderPlot({
-    req(km_state$sf)
+    req(km_state$triggered, rval$pub)
+    outcome <- input$km_outcome %||% "EFS"
+    time_col   <- if (outcome == "OS") "OS_Time"   else "EFS_Time"
+    status_col <- if (outcome == "OS") "OS_Status" else "EFS_Status"
     strat <- if (!is.null(input$km_strata) && input$km_strata != "None")
                input$km_strata else NULL
+    fct   <- if (!is.null(input$km_facet) && input$km_facet != "None")
+               input$km_facet else NULL
+    fvar  <- if (!is.null(input$km_filter_var) && input$km_filter_var != "None")
+               input$km_filter_var else NULL
+    flev  <- if (!is.null(fvar)) input$km_filter_levels else NULL
     tmax  <- if (!is.na(input$km_tmax) && input$km_tmax > 0)
                input$km_tmax else NULL
-    plot_km(rval$data, strata = strat, time_max = tmax)
+    plot_km(rval$pub,
+            time_col = time_col, status_col = status_col,
+            strata = strat, facet_by = fct,
+            filter_var = fvar, filter_values = flev,
+            time_max = tmax,
+            ylab = if (outcome == "OS") "Overall survival"
+                   else "Event-free survival",
+            title = if (outcome == "OS") "Kaplan-Meier \u2014 OS"
+                    else "Kaplan-Meier \u2014 EFS")
+  })
+
+  # --- Cox multivariable (publication dataset) -------------------------------
+  output$cox_vars_ui <- renderUI({
+    req(rval$pub)
+    choices <- pub_factor_vars()
+    if ("Ki67_Index" %in% names(rval$pub)) choices <- c("Ki67_Index", choices)
+    defaults <- intersect(pub_model_vars(), choices)
+    checkboxGroupInput("cox_vars", "Covariates:",
+                       choices  = choices,
+                       selected = defaults)
+  })
+
+  observeEvent(input$cox_btn, {
+    req(rval$pub, input$cox_vars)
+    vars <- input$cox_vars
+    if (length(vars) < 1L) {
+      showNotification("Pick at least one covariate.", type = "warning")
+      return()
+    }
+    df <- rval$pub
+    has_efs <- all(c("EFS_Time", "EFS_Status") %in% names(df))
+    has_os  <- all(c("OS_Time",  "OS_Status")  %in% names(df))
+    if (!has_efs && !has_os) {
+      showNotification("Publication dataset lacks EFS_* and OS_* columns.",
+                       type = "error")
+      return()
+    }
+    withProgress(message = "Fitting Cox models\u2026", value = 0.2, {
+      res <- tryCatch({
+        if (has_efs && has_os) {
+          cox_dual_endpoint(df, vars)
+        } else {
+          tc <- if (has_efs) "EFS_Time"   else "OS_Time"
+          sc <- if (has_efs) "EFS_Status" else "OS_Status"
+          fit <- cox_multivar_fit(df, tc, sc, vars)
+          list(efs = fit, os = fit,
+               plot_efs = cox_forest_plot(fit$fp),
+               plot_os  = cox_forest_plot(fit$fp),
+               table    = cox_combined_table(fit, fit))
+        }
+      }, error = function(e) {
+        showNotification(paste("Cox fit failed:", e$message),
+                         type = "error", duration = NULL)
+        NULL
+      })
+      incProgress(0.8)
+      rval$cox_res <- res
+    })
+  })
+
+  output$cox_plot_efs <- renderPlot({
+    req(rval$cox_res); rval$cox_res$plot_efs
+  })
+  output$cox_plot_os <- renderPlot({
+    req(rval$cox_res); rval$cox_res$plot_os
+  })
+  output$cox_table <- gt::render_gt({
+    req(rval$cox_res); rval$cox_res$table
   })
 
   # --- Formula builder -------------------------------------------------------

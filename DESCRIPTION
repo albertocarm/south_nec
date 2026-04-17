@@ -30,6 +30,8 @@ Imports:
     parallel
 Suggests:
     rms,
+    gt,
+    ggsci,
     knitr,
     rmarkdown
 URL: https://github.com/albertocarm/rgetne
