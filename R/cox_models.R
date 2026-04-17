@@ -149,8 +149,7 @@ cox_forest_plot <- function(fp, title = "Forest plot",
   if (!requireNamespace("ggplot2", quietly = TRUE)) {
     stop("Package 'ggplot2' is required.")
   }
-  jco <- tryCatch(ggsci::pal_jco()(2),
-                  error = function(e) c("#0073C2FF", "#EFC000FF"))
+  jco <- jco_palette(4)
 
   fp$sig_f <- factor(fp$sig, levels = c(FALSE, TRUE))
   fp$Variable <- factor(fp$Variable, levels = rev(fp$Variable))
@@ -159,34 +158,40 @@ cox_forest_plot <- function(fp, title = "Forest plot",
 
   ggplot2::ggplot(fp, ggplot2::aes(x = .data$Effect, y = .data$Variable)) +
     ggplot2::geom_vline(xintercept = 1, linetype = "dashed",
-                        color = "grey50") +
+                        color = "grey55", linewidth = 0.6) +
     ggplot2::geom_errorbarh(
       ggplot2::aes(xmin = .data$CI_Lower, xmax = .data$CI_Upper,
                    color = .data$sig_f),
-      height = 0.25, linewidth = 1, show.legend = FALSE) +
+      height = 0.3, linewidth = 1.2, show.legend = FALSE) +
     ggplot2::geom_point(
       ggplot2::aes(shape = .data$sig_f, color = .data$sig_f),
-      size = 4.5, show.legend = FALSE) +
+      size = 5.5, show.legend = FALSE) +
     ggplot2::geom_text(
       ggplot2::aes(x = xmax_ci * 1.1, label = .data$p_lbl,
                    color = .data$sig_f),
-      hjust = 0, size = 4.5, show.legend = FALSE) +
+      hjust = 0, size = 5.5, fontface = "bold", show.legend = FALSE) +
     ggplot2::scale_color_manual(
-      values = c("FALSE" = jco[2], "TRUE" = jco[1])) +
+      values = c("FALSE" = jco[3], "TRUE" = jco[1])) +
     ggplot2::scale_shape_manual(values = c("FALSE" = 21, "TRUE" = 18)) +
     ggplot2::scale_x_continuous(
       "Hazard Ratio (95% CI)",
-      expand = ggplot2::expansion(mult = c(0.05, 0.3))) +
+      expand = ggplot2::expansion(mult = c(0.05, 0.35))) +
     ggplot2::labs(title = title, subtitle = subtitle, y = NULL) +
-    ggplot2::theme_classic(base_size = 15) +
+    ggplot2::theme_minimal(base_size = 18) +
     ggplot2::theme(
-      plot.title    = ggplot2::element_text(hjust = 0.5, face = "bold",
-                                            size = 17),
-      plot.subtitle = ggplot2::element_text(hjust = 0.5, color = "grey40",
-                                            size = 13),
-      axis.title.x  = ggplot2::element_text(size = 14),
-      axis.text.x   = ggplot2::element_text(size = 12, color = "grey20"),
-      axis.text.y   = ggplot2::element_text(size = 13, color = "grey10"))
+      plot.title       = ggplot2::element_text(hjust = 0.5, face = "bold",
+                                               size = 20,
+                                               margin = ggplot2::margin(b = 4)),
+      plot.subtitle    = ggplot2::element_text(hjust = 0.5, color = "grey40",
+                                               size = 15,
+                                               margin = ggplot2::margin(b = 10)),
+      axis.title.x     = ggplot2::element_text(size = 17,
+                                               margin = ggplot2::margin(t = 8)),
+      axis.text.x      = ggplot2::element_text(size = 14, color = "grey20"),
+      axis.text.y      = ggplot2::element_text(size = 15, color = "grey10"),
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major.y = ggplot2::element_blank(),
+      panel.grid.major.x = ggplot2::element_line(color = "grey93"))
 }
 
 # =============================================================================

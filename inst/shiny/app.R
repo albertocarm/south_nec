@@ -205,6 +205,11 @@ ui <- page_sidebar(
     nav_panel(
       "Data",
       layout_columns(
+        col_widths = c(8, 4),
+        uiOutput("data_source_info"),
+        uiOutput("data_source_ui")
+      ),
+      layout_columns(
         col_widths = c(7, 5),
         card(
           card_header("Preview (first 10 rows)"),
@@ -215,20 +220,32 @@ ui <- page_sidebar(
           tableOutput("data_desc_table")
         )
       ),
-      card(
-        card_header("Variable summary"),
-        verbatimTextOutput("data_summary")
-      ),
       layout_columns(
-        col_widths = c(6, 6),
+        col_widths = c(4, 8),
         card(
-          card_header("Ki-67 distribution"),
-          plotOutput("hist_ki67", height = "260px")
+          card_header("Explore a variable"),
+          uiOutput("explore_var_ui"),
+          radioButtons("explore_type", "Plot type:",
+                       choices = c("Auto"      = "auto",
+                                   "Density"   = "density",
+                                   "Histogram" = "histogram",
+                                   "Bar"       = "bar",
+                                   "Pie"       = "pie"),
+                       selected = "auto", inline = TRUE)
         ),
         card(
-          card_header("Event-free survival time distribution"),
-          plotOutput("hist_efs", height = "260px")
+          card_header("Distribution"),
+          plotOutput("explore_plot", height = "380px")
         )
+      ),
+      card(
+        card_header("Ki-67 density and categorical overview"),
+        layout_columns(
+          col_widths = c(6, 6),
+          plotOutput("overview_ki67", height = "320px"),
+          plotOutput("overview_efs",  height = "320px")
+        ),
+        plotOutput("overview_cats", height = "460px")
       )
     ),
 
@@ -483,8 +500,26 @@ server <- function(input, output, session) {
     })
   })
 
-  pub_factor_vars <- reactive({
+  # Publication dataset augmented with a Ki-67 quartile factor so that it can
+  # be selected as strata, facet or filter in the KM and Cox tabs the same
+  # way as any other categorical variable.
+  pub_aug <- reactive({
     df <- rval$pub; req(df)
+    if ("Ki67_Index" %in% names(df)) {
+      q <- stats::quantile(df$Ki67_Index, c(.25, .5, .75), na.rm = TRUE)
+      df$Ki67_Q4 <- cut(df$Ki67_Index,
+                        breaks = c(-Inf, q, Inf),
+                        labels = c(sprintf("Q1 [<=%.0f%%]",    q[1]),
+                                   sprintf("Q2 (%.0f-%.0f%%]", q[1], q[2]),
+                                   sprintf("Q3 (%.0f-%.0f%%]", q[2], q[3]),
+                                   sprintf("Q4 (>%.0f%%)",    q[3])),
+                        include.lowest = TRUE)
+    }
+    df
+  })
+
+  pub_factor_vars <- reactive({
+    df <- pub_aug(); req(df)
     keep <- vapply(df, function(x) {
       is.factor(x) || is.character(x) ||
         (is.numeric(x) && length(unique(stats::na.omit(x))) <= 6)
@@ -499,6 +534,15 @@ server <- function(input, output, session) {
     candidates <- c("Sex", "TNM_Stage", "Primary_Surgery", "Site_4_Groups",
                     "Ki67_Index", "Perioperative_Chemo", "ECOG_PS")
     intersect(candidates, names(df))
+  })
+
+  # Dataset driving the Data tab: prefer the publication dataset when
+  # available (richer set of covariates), fall back to the preprocessed one.
+  data_explorer_df <- reactive({
+    if (!is.null(rval$pub)) pub_aug() else rval$data
+  })
+  data_explorer_src <- reactive({
+    if (!is.null(rval$pub)) "publication" else "preprocessed"
   })
 
   # --- Per-variable prior UI -------------------------------------------------
@@ -634,37 +678,97 @@ server <- function(input, output, session) {
                 100 * mean(rval$data$.status_bin)))
   })
 
-  output$data_preview <- renderTable({
-    req(rval$data)
-    head(rval$data, 10)
+  output$data_source_info <- renderUI({
+    src <- data_explorer_src()
+    n   <- nrow(data_explorer_df() %||% data.frame())
+    k   <- ncol(data_explorer_df() %||% data.frame())
+    badge <- if (src == "publication") "Publication dataset (factor-coded)"
+             else "Preprocessed cure-model dataset"
+    helpText(
+      style = "font-size:0.95em;",
+      icon("database"), " Showing: ", strong(badge),
+      sprintf(" (n = %d, %d columns).", n, k))
   })
 
-  output$data_summary <- renderPrint({
-    req(rval$data)
-    summary(rval$data[, intersect(MODEL_VARS, names(rval$data)), drop = FALSE])
+  output$data_source_ui <- renderUI({
+    NULL
+  })
+
+  output$data_preview <- renderTable({
+    df <- data_explorer_df(); req(df)
+    utils::head(df, 10)
   })
 
   output$data_desc_table <- renderTable({
-    req(rval$data)
-    data_summary_table(rval$data)
+    df <- data_explorer_df(); req(df)
+    if (data_explorer_src() == "publication") {
+      rows <- lapply(names(df), function(v) {
+        x <- df[[v]]
+        x <- x[!is.na(x)]
+        if (length(x) == 0) return(NULL)
+        if (is.numeric(x) && length(unique(x)) > 6) {
+          data.frame(variable = v, stat = "median [IQR]",
+                     value = sprintf("%.1f [%.1f-%.1f]",
+                                     stats::median(x),
+                                     stats::quantile(x, .25),
+                                     stats::quantile(x, .75)),
+                     stringsAsFactors = FALSE)
+        } else {
+          tab <- table(factor(x))
+          lbl <- paste(sprintf("%s: %d (%.0f%%)",
+                               names(tab), as.integer(tab),
+                               100 * as.integer(tab) / sum(tab)),
+                       collapse = "; ")
+          data.frame(variable = v, stat = "n (%)",
+                     value = lbl, stringsAsFactors = FALSE)
+        }
+      })
+      do.call(rbind, rows)
+    } else {
+      data_summary_table(df)
+    }
   }, striped = TRUE, hover = TRUE)
 
-  output$hist_ki67 <- renderPlot({
-    req(rval$data)
-    opar <- par(mar = c(4, 4, 2, 1))
-    on.exit(par(opar), add = TRUE)
-    hist(rval$data$ki67_percent, breaks = 20,
-         col = "#4A90D9", border = "white",
-         main = "Ki-67 (%)", xlab = "Ki-67 (%)", ylab = "Frequency")
+  output$explore_var_ui <- renderUI({
+    df <- data_explorer_df(); req(df)
+    ch <- setdiff(names(df), c(".status_bin"))
+    default <- if ("Ki67_Index" %in% ch) "Ki67_Index"
+               else if ("ki67_percent" %in% ch) "ki67_percent"
+               else ch[1]
+    selectInput("explore_var", "Variable:", choices = ch, selected = default)
   })
 
-  output$hist_efs <- renderPlot({
-    req(rval$data)
-    opar <- par(mar = c(4, 4, 2, 1))
-    on.exit(par(opar), add = TRUE)
-    hist(rval$data$EFS_time, breaks = 25,
-         col = "#1B4F8A", border = "white",
-         main = "EFS time", xlab = "Time (years)", ylab = "Frequency")
+  output$explore_plot <- renderPlot({
+    df <- data_explorer_df(); req(df)
+    v  <- input$explore_var; req(v, v %in% names(df))
+    plot_variable(df, v, type = input$explore_type %||% "auto")
+  })
+
+  output$overview_ki67 <- renderPlot({
+    df <- data_explorer_df(); req(df)
+    v <- if ("Ki67_Index" %in% names(df)) "Ki67_Index"
+         else if ("ki67_percent" %in% names(df)) "ki67_percent"
+         else return(NULL)
+    plot_variable(df, v, type = "density",
+                  title = "Ki-67 proliferation index")
+  })
+
+  output$overview_efs <- renderPlot({
+    df <- data_explorer_df(); req(df)
+    v <- if ("EFS_Time" %in% names(df)) "EFS_Time"
+         else if ("EFS_time" %in% names(df)) "EFS_time"
+         else return(NULL)
+    plot_variable(df, v, type = "density",
+                  title = "Event-free survival time")
+  })
+
+  output$overview_cats <- renderPlot({
+    df <- data_explorer_df(); req(df)
+    cat_vars <- setdiff(pub_factor_vars(), "Ki67_Q4")
+    if (length(cat_vars) == 0) return(NULL)
+    plots <- lapply(cat_vars, function(v) plot_variable(df, v, type = "bar"))
+    gridExtra::grid.arrange(grobs = plots,
+                            ncol = min(3, length(plots)))
   })
 
   # --- Kaplan-Meier (publication dataset) ------------------------------------
@@ -712,7 +816,7 @@ server <- function(input, output, session) {
     flev  <- if (!is.null(fvar)) input$km_filter_levels else NULL
     tmax  <- if (!is.na(input$km_tmax) && input$km_tmax > 0)
                input$km_tmax else NULL
-    plot_km(rval$pub,
+    plot_km(pub_aug(),
             time_col = time_col, status_col = status_col,
             strata = strat, facet_by = fct,
             filter_var = fvar, filter_values = flev,
@@ -741,7 +845,7 @@ server <- function(input, output, session) {
       showNotification("Pick at least one covariate.", type = "warning")
       return()
     }
-    df <- rval$pub
+    df <- pub_aug()
     has_efs <- all(c("EFS_Time", "EFS_Status") %in% names(df))
     has_os  <- all(c("OS_Time",  "OS_Status")  %in% names(df))
     if (!has_efs && !has_os) {

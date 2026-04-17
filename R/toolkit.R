@@ -61,6 +61,125 @@ publication_data <- function() {
   p
 }
 
+# -----------------------------------------------------------------------------
+# Shared palette helper (JCO via ggsci, with a hardcoded fallback so the
+# package does not hard-depend on ggsci).
+# -----------------------------------------------------------------------------
+jco_palette <- function(n = 10) {
+  if (requireNamespace("ggsci", quietly = TRUE)) {
+    return(ggsci::pal_jco()(n))
+  }
+  fb <- c("#0073C2FF", "#EFC000FF", "#868686FF", "#CD534CFF",
+          "#7AA6DCFF", "#003C67FF", "#8F7700FF", "#3B3B3BFF",
+          "#A73030FF", "#4A6990FF")
+  rep(fb, length.out = n)
+}
+
+# =============================================================================
+#' Plot a single variable (auto-selecting geom by type)
+#'
+#' Convenience helper used by the Shiny data-explorer tab and standalone
+#' exploration. Continuous variables are shown as a density overlaid on a
+#' histogram; categorical variables as a bar chart of counts (or as a pie
+#' chart when `type = "pie"`). The palette is JCO (via `ggsci`) when the
+#' package is available.
+#'
+#' @param dat A `data.frame`.
+#' @param var Character name of the column to plot.
+#' @param type One of `"auto"`, `"density"`, `"histogram"`, `"bar"`, `"pie"`.
+#' @param title Optional plot title (defaults to `var`).
+#' @return A `ggplot` object.
+#' @export
+plot_variable <- function(dat, var,
+                          type  = c("auto", "density", "histogram",
+                                    "bar", "pie"),
+                          title = NULL) {
+  stopifnot(is.data.frame(dat), var %in% names(dat))
+  if (!requireNamespace("ggplot2", quietly = TRUE)) {
+    stop("Package 'ggplot2' is required.")
+  }
+  type <- match.arg(type)
+  x <- dat[[var]]
+  is_numeric_cont <- is.numeric(x) &&
+    length(unique(stats::na.omit(x))) > 6
+  if (type == "auto") {
+    type <- if (is_numeric_cont) "density" else "bar"
+  }
+
+  minimal <- ggplot2::theme_minimal(base_size = 18) +
+    ggplot2::theme(
+      plot.title    = ggplot2::element_text(hjust = 0.5, face = "bold",
+                                            size = 19),
+      axis.title    = ggplot2::element_text(size = 16),
+      axis.text     = ggplot2::element_text(size = 14, color = "grey20"),
+      legend.title  = ggplot2::element_text(size = 15, face = "bold"),
+      legend.text   = ggplot2::element_text(size = 14),
+      panel.grid.minor = ggplot2::element_blank())
+
+  title <- title %||% var
+
+  if (type %in% c("density", "histogram")) {
+    d <- data.frame(x = as.numeric(x))
+    d <- d[!is.na(d$x), , drop = FALSE]
+    base <- ggplot2::ggplot(d, ggplot2::aes(x = .data$x))
+    col <- jco_palette(1)
+    if (type == "density") {
+      p <- base +
+        ggplot2::geom_histogram(
+          ggplot2::aes(y = ggplot2::after_stat(density)),
+          bins = 30, fill = col, color = "white", alpha = 0.55) +
+        ggplot2::geom_density(color = "#003C67FF", linewidth = 1.2) +
+        ggplot2::labs(title = title, x = var, y = "Density")
+    } else {
+      p <- base +
+        ggplot2::geom_histogram(bins = 30, fill = col,
+                                color = "white") +
+        ggplot2::labs(title = title, x = var, y = "Count")
+    }
+    return(p + minimal)
+  }
+
+  tab <- as.data.frame(table(factor(x), useNA = "no"),
+                       stringsAsFactors = FALSE)
+  names(tab) <- c("level", "n")
+  tab$pct <- 100 * tab$n / sum(tab$n)
+  tab$level <- factor(tab$level, levels = tab$level)
+  pal <- jco_palette(nrow(tab))
+
+  if (type == "bar") {
+    ggplot2::ggplot(tab, ggplot2::aes(x = .data$level, y = .data$n,
+                                      fill = .data$level)) +
+      ggplot2::geom_col(width = 0.7, color = "white") +
+      ggplot2::geom_text(
+        ggplot2::aes(label = sprintf("%d (%.0f%%)", .data$n, .data$pct)),
+        vjust = -0.35, size = 5, color = "grey20") +
+      ggplot2::scale_fill_manual(values = pal, guide = "none") +
+      ggplot2::scale_y_continuous(
+        expand = ggplot2::expansion(mult = c(0, 0.12))) +
+      ggplot2::labs(title = title, x = var, y = "Count") +
+      minimal
+  } else { # pie
+    ggplot2::ggplot(tab, ggplot2::aes(x = "", y = .data$n,
+                                      fill = .data$level)) +
+      ggplot2::geom_col(width = 1, color = "white") +
+      ggplot2::coord_polar(theta = "y") +
+      ggplot2::geom_text(
+        ggplot2::aes(label = sprintf("%s\n%.0f%%", .data$level, .data$pct)),
+        position = ggplot2::position_stack(vjust = 0.5),
+        size = 5, color = "white", fontface = "bold") +
+      ggplot2::scale_fill_manual(values = pal, name = var) +
+      ggplot2::labs(title = title, x = NULL, y = NULL) +
+      minimal +
+      ggplot2::theme(axis.text  = ggplot2::element_blank(),
+                     panel.grid = ggplot2::element_blank())
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Internal: ensure the %||% operator exists inside the package.
+# -----------------------------------------------------------------------------
+`%||%` <- function(a, b) if (is.null(a)) b else a
+
 # =============================================================================
 #' Load an RDS dataset with an EFS_time column
 #'
@@ -1222,30 +1341,39 @@ plot_km <- function(dat,
   xlim_r <- if (!is.null(time_max) && time_max > 0) c(0, time_max)
             else c(0, max(curves$time, na.rm = TRUE))
 
+  n_groups <- length(unique(curves$group))
+  pal <- if (!is.null(palette)) palette else jco_palette(max(n_groups, 2))
+
   g <- ggplot2::ggplot(
         curves,
         ggplot2::aes(x = .data$time, y = .data$surv, color = .data$group)) +
-    ggplot2::geom_step(linewidth = 1.1) +
+    ggplot2::geom_step(linewidth = 1.3) +
     ggplot2::geom_point(
       data = curves[curves$cens, , drop = FALSE],
-      shape = 3, size = 2.5, stroke = 0.9, show.legend = FALSE) +
+      shape = 3, size = 2.8, stroke = 1, show.legend = FALSE) +
+    ggplot2::scale_color_manual(values = pal) +
     ggplot2::coord_cartesian(xlim = xlim_r, ylim = c(0, 1)) +
     ggplot2::labs(x = xlab, y = ylab, title = title, color = strata) +
-    ggplot2::theme_classic(base_size = 15) +
+    ggplot2::theme_minimal(base_size = 18) +
     ggplot2::theme(
       plot.title       = ggplot2::element_text(hjust = 0.5, face = "bold",
-                                               size = 17),
-      axis.title       = ggplot2::element_text(size = 14),
-      axis.text        = ggplot2::element_text(size = 12, color = "grey20"),
-      strip.text       = ggplot2::element_text(size = 14, face = "bold"),
-      strip.background = ggplot2::element_rect(fill = "grey92", color = NA),
-      legend.title     = ggplot2::element_text(size = 13, face = "bold"),
-      legend.text      = ggplot2::element_text(size = 12),
-      legend.position  = if (has_strata) "bottom" else "none")
+                                               size = 20,
+                                               margin = ggplot2::margin(b = 10)),
+      axis.title       = ggplot2::element_text(size = 17),
+      axis.title.x     = ggplot2::element_text(margin = ggplot2::margin(t = 8)),
+      axis.title.y     = ggplot2::element_text(margin = ggplot2::margin(r = 8)),
+      axis.text        = ggplot2::element_text(size = 15, color = "grey20"),
+      axis.line        = ggplot2::element_line(color = "grey70"),
+      strip.text       = ggplot2::element_text(size = 17, face = "bold",
+                                               color = "grey10"),
+      strip.background = ggplot2::element_rect(fill = "grey94", color = NA),
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major = ggplot2::element_line(color = "grey92"),
+      legend.title     = ggplot2::element_text(size = 16, face = "bold"),
+      legend.text      = ggplot2::element_text(size = 15),
+      legend.position  = if (has_strata) "bottom" else "none",
+      legend.key.width = grid::unit(1.5, "cm"))
 
-  if (!is.null(palette)) {
-    g <- g + ggplot2::scale_color_manual(values = palette)
-  }
   if (has_facet) {
     g <- g + ggplot2::facet_wrap(~ facet)
   }
@@ -1255,7 +1383,8 @@ plot_km <- function(dat,
       ggplot2::aes(x = xlim_r[1] + diff(xlim_r) * 0.02,
                    y = 0.08,
                    label = .data$label),
-      inherit.aes = FALSE, hjust = 0, size = 4.5, color = "grey25")
+      inherit.aes = FALSE, hjust = 0, size = 5.5,
+      color = "grey25", fontface = "italic")
   }
 
   g
