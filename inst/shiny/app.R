@@ -102,8 +102,13 @@ ui <- page_sidebar(
         selectInput("int_var2", "Variable 2:",
                     choices = c("None", MODEL_VARS),
                     selected = "periop_therapy"),
-        numericInput("prior_clono", "Prior SD (clonogenic):",
-                     value = 2.5, step = 0.5, min = 0.1)
+        hr(),
+        h6("Prior SD per variable (clonogenic)"),
+        helpText(style = "font-size:0.82em;",
+                 "Continuous coefficients live on the standardised scale",
+                 "(see scaling method below); binary/categorical",
+                 "coefficients live on the raw 0/1 scale."),
+        uiOutput("prior_clono_ui")
       ),
 
       accordion_panel(
@@ -113,12 +118,18 @@ ui <- page_sidebar(
         checkboxGroupInput("kinet_vars", "Main effects:",
                            choices  = MODEL_VARS,
                            selected = c("ki67_percent", "periop_therapy")),
-        numericInput("prior_kinet", "Prior SD (kinetic):",
-                     value = 0.25, step = 0.05, min = 0.01)
+        hr(),
+        h6("Prior SD per variable (kinetic)"),
+        uiOutput("prior_kinet_ui")
       ),
 
       accordion_panel(
         "MCMC & computation",
+        selectInput("scaling_method",
+                    "Scaling method for continuous predictors:",
+                    choices  = c("Gelman (mean, 2*SD)" = "gelman",
+                                 "Z-score (mean, SD)"  = "zscore"),
+                    selected = "gelman"),
         numericInput("mcmc_chains", "Chains:",     value = 4,    min = 1, max = 8),
         numericInput("mcmc_iter",   "Iterations:", value = 4000, step = 500),
         numericInput("mcmc_warmup", "Warmup:",     value = 1000, step = 500),
@@ -320,6 +331,46 @@ ui <- page_sidebar(
 
     # -------------------------------------------------------------------------
     nav_panel(
+      "Marginal effects",
+      layout_sidebar(
+        sidebar = sidebar(
+          width = 320,
+          h5("Scenario grid"),
+          helpText(style = "font-size:0.85em;",
+                   "Pick a continuous X-axis (scanned over its observed",
+                   "range) and an optional binary variable to split the",
+                   "lines. All other covariates are held fixed at their",
+                   "sample mean (continuous) or 0 (binary)."),
+          selectInput("me_target", "Quantity:",
+                      choices = c("Cure probability"  = "cure_prob",
+                                  "Clonogen count"    = "theta",
+                                  "Latency scale"     = "lambda",
+                                  "Median event time" = "median_time"),
+                      selected = "cure_prob"),
+          selectInput("me_xvar", "Continuous X-axis:",
+                      choices  = CONTINUOUS_VARS,
+                      selected = "ki67_percent"),
+          selectInput("me_groupvar", "Group by (binary):",
+                      choices  = c("None", BINARY_VARS),
+                      selected = "periop_therapy"),
+          numericInput("me_ngrid", "Grid resolution:",
+                       value = 40, min = 5, max = 200, step = 5),
+          actionButton("me_btn", "Compute marginal effects",
+                       class = "btn-success", width = "100%")
+        ),
+        card(
+          card_header("Posterior expected prediction"),
+          plotOutput("me_plot", height = "480px")
+        ),
+        card(
+          card_header("Summary table"),
+          tableOutput("me_table")
+        )
+      )
+    ),
+
+    # -------------------------------------------------------------------------
+    nav_panel(
       "About",
       layout_columns(
         col_widths = c(12),
@@ -372,7 +423,61 @@ ui <- page_sidebar(
 server <- function(input, output, session) {
 
   rval <- reactiveValues(data = NULL, cfit = NULL, cens_out = NULL,
-                         precomputed = FALSE)
+                         precomputed = FALSE, me_res = NULL)
+
+  # --- Per-variable prior UI -------------------------------------------------
+  default_prior_for_var <- function(v) if (v %in% CONTINUOUS_VARS) 1.0 else 2.5
+
+  build_prior_inputs <- function(id_prefix, selected_vars,
+                                 interaction_term = NULL) {
+    if (length(selected_vars) == 0) {
+      return(helpText("Select at least one main effect."))
+    }
+    rows <- lapply(selected_vars, function(v) {
+      numericInput(paste0(id_prefix, v),
+                   label = v,
+                   value = default_prior_for_var(v),
+                   step  = 0.1, min = 0.01)
+    })
+    if (!is.null(interaction_term)) {
+      rows <- c(rows,
+                list(numericInput(paste0(id_prefix, interaction_term),
+                                  label = interaction_term,
+                                  value = 1.0,
+                                  step  = 0.1, min = 0.01)))
+    }
+    do.call(tagList, rows)
+  }
+
+  interaction_name <- reactive({
+    v1 <- input$int_var1; v2 <- input$int_var2
+    if (is.null(v1) || is.null(v2) || v1 == "None" || v2 == "None" || v1 == v2)
+      return(NULL)
+    paste(v1, v2, sep = ":")
+  })
+
+  output$prior_clono_ui <- renderUI({
+    build_prior_inputs("prior_clono_",
+                       input$clono_vars,
+                       interaction_name())
+  })
+
+  output$prior_kinet_ui <- renderUI({
+    build_prior_inputs("prior_kinet_",
+                       input$kinet_vars,
+                       interaction_term = NULL)
+  })
+
+  collect_prior_list <- function(id_prefix, selected_vars,
+                                 interaction_term = NULL) {
+    terms <- c(selected_vars, interaction_term)
+    out <- list()
+    for (v in terms) {
+      val <- input[[paste0(id_prefix, v)]]
+      if (!is.null(val) && is.numeric(val) && val > 0) out[[v]] <- val
+    }
+    out
+  }
 
   # --- Load data (default or uploaded) ---------------------------------------
   observe({
@@ -535,30 +640,39 @@ server <- function(input, output, session) {
       tryCatch({
         forms <- build_formulas()
 
-        incProgress(0.1, detail = "Building design matrices")
+        incProgress(0.1, detail = "Standardising predictors")
 
-        mod_spec <- cure_model(
-          dat               = rval$data,
-          clonogenic        = forms$clono,
-          kinetic           = forms$kinet,
-          prior_clonogenic  = input$prior_clono,
-          prior_kinetic     = input$prior_kinet,
-          prior_intercept   = input$prior_int,
-          stan_file         = stan_file_cached()
+        clono_priors <- collect_prior_list("prior_clono_",
+                                           input$clono_vars,
+                                           interaction_name())
+        kinet_priors <- collect_prior_list("prior_kinet_",
+                                           input$kinet_vars)
+
+        predictors <- unique(c(input$clono_vars, input$kinet_vars,
+                               if (!is.null(interaction_name()))
+                                 c(input$int_var1, input$int_var2)))
+
+        incProgress(0.15, detail = "NUTS sampling (this can take a while)")
+
+        cfit <- fit_cure_bayes(
+          data             = rval$data,
+          clonogenic       = forms$clono,
+          kinetic          = forms$kinet,
+          predictors       = predictors,
+          metodo           = input$scaling_method,
+          prior_clonogenic = if (length(clono_priors) > 0) clono_priors else NULL,
+          prior_kinetic    = if (length(kinet_priors) > 0) kinet_priors else NULL,
+          prior_intercept  = input$prior_int,
+          chains           = input$mcmc_chains,
+          iter             = input$mcmc_iter,
+          warmup           = input$mcmc_warmup,
+          adapt_delta      = input$mcmc_adapt
         )
 
-        incProgress(0.2, detail = "NUTS sampling (this can take a while)")
-
-        cfit <- fit_model(
-          mod_spec,
-          chains      = input$mcmc_chains,
-          iter        = input$mcmc_iter,
-          warmup      = input$mcmc_warmup,
-          adapt_delta = input$mcmc_adapt
-        )
-
-        rval$cfit <- cfit
+        rval$cfit     <- cfit
         rval$cens_out <- NULL
+        rval$me_res   <- NULL
+        rval$precomputed <- FALSE
         showNotification("Model successfully fitted.", type = "message")
       }, error = function(e) {
         showNotification(paste("Error during model run:", e$message),
@@ -679,6 +793,140 @@ server <- function(input, output, session) {
     req(plot_state$surv)
     plot_surv_curve(plot_state$surv$cfit)
   })
+
+  # --- Marginal effects (posterior_epred_cure) -------------------------------
+  me_target_label <- function(type) {
+    switch(type,
+           cure_prob   = "Cure probability",
+           theta       = "Clonogen count (theta)",
+           lambda      = "Latency scale (lambda)",
+           median_time = "Median event time")
+  }
+
+  observeEvent(input$me_btn, {
+    req(rval$cfit, rval$data)
+
+    sp <- rval$cfit$spec
+    if (is.null(sp$scaling)) {
+      showNotification(
+        paste("This model has no scaling metadata (it was fit with the",
+              "legacy pipeline or loaded from the precomputed cache). Click",
+              "'Run Bayesian Model' to refit with the new per-variable prior",
+              "pipeline and enable marginal effects."),
+        type = "warning", duration = 12)
+      return(NULL)
+    }
+
+    x_var <- input$me_xvar
+    g_var <- input$me_groupvar
+    n_grid <- max(5L, as.integer(input$me_ngrid))
+
+    # Covariates required by the training formulas
+    req_vars <- unique(c(all.vars(sp$formula_clono),
+                         all.vars(sp$formula_kinet)))
+
+    x_raw <- rval$data[[x_var]]
+    if (is.null(x_raw)) {
+      showNotification(sprintf("Variable '%s' is not in the data.", x_var),
+                       type = "error")
+      return(NULL)
+    }
+    x_seq <- seq(min(x_raw, na.rm = TRUE),
+                 max(x_raw, na.rm = TRUE),
+                 length.out = n_grid)
+
+    use_group <- !is.null(g_var) && g_var != "None" && g_var %in% req_vars
+    group_levels <- if (use_group) c(0L, 1L) else NA_integer_
+
+    newdata <- expand.grid(x = x_seq, g = group_levels,
+                           stringsAsFactors = FALSE)
+    names(newdata) <- c(x_var, if (use_group) g_var else "._drop")
+    if (!use_group) newdata[["._drop"]] <- NULL
+
+    # Hold remaining covariates at their mean (continuous) or 0 (binary)
+    for (v in setdiff(req_vars, names(newdata))) {
+      col <- rval$data[[v]]
+      if (is.null(col)) {
+        newdata[[v]] <- 0
+      } else if (v %in% CONTINUOUS_VARS) {
+        newdata[[v]] <- mean(col, na.rm = TRUE)
+      } else {
+        newdata[[v]] <- 0L
+      }
+    }
+
+    withProgress(message = "Computing posterior predictions...", value = 0.3, {
+      tryCatch({
+        ep <- posterior_epred_cure(rval$cfit, newdata, type = input$me_target)
+        res <- summarize_epred(ep, newdata = newdata)
+        res$x_var <- x_var
+        res$group <- if (use_group) factor(newdata[[g_var]]) else factor("all")
+        res$target <- input$me_target
+        rval$me_res <- list(res = res, x_var = x_var,
+                            use_group = use_group, g_var = g_var,
+                            target = input$me_target)
+      }, error = function(e) {
+        showNotification(paste("Marginal effects failed:", e$message),
+                         type = "error", duration = 10)
+      })
+    })
+  })
+
+  output$me_plot <- renderPlot({
+    me <- rval$me_res
+    req(me)
+
+    df <- me$res
+    ylab <- me_target_label(me$target)
+    x_col <- me$x_var
+    if (me$target == "cure_prob") {
+      df$median <- df$median * 100
+      df$lo     <- df$lo * 100
+      df$hi     <- df$hi * 100
+      ylab <- paste0(ylab, " (%)")
+    }
+
+    p <- ggplot2::ggplot(df, ggplot2::aes(x = .data[[x_col]], y = median))
+    if (me$use_group) {
+      df$group <- factor(df[[me$g_var]])
+      p <- ggplot2::ggplot(df, ggplot2::aes(x = .data[[x_col]], y = median,
+                                            colour = group, fill = group)) +
+        ggplot2::geom_ribbon(ggplot2::aes(ymin = lo, ymax = hi),
+                             alpha = 0.18, colour = NA) +
+        ggplot2::geom_line(linewidth = 1.1) +
+        ggplot2::scale_colour_manual(
+          values = c("0" = "#1B4F8A", "1" = "#B8372E"),
+          name = me$g_var) +
+        ggplot2::scale_fill_manual(
+          values = c("0" = "#1B4F8A", "1" = "#B8372E"),
+          name = me$g_var)
+    } else {
+      p <- p +
+        ggplot2::geom_ribbon(ggplot2::aes(ymin = lo, ymax = hi),
+                             alpha = 0.2, fill = "#1B4F8A") +
+        ggplot2::geom_line(linewidth = 1.1, colour = "#1B4F8A")
+    }
+
+    p +
+      ggplot2::labs(x = x_col, y = ylab,
+                    title = sprintf("%s vs %s", ylab, x_col),
+                    subtitle = "Posterior median with 95% credible interval") +
+      ggplot2::theme_minimal(base_size = 13) +
+      ggplot2::theme(plot.title    = ggplot2::element_text(face = "bold"),
+                     plot.subtitle = ggplot2::element_text(colour = "grey40"),
+                     panel.grid.minor = ggplot2::element_blank())
+  })
+
+  output$me_table <- renderTable({
+    me <- rval$me_res
+    req(me)
+    df <- me$res
+    keep <- c(me$x_var,
+              if (me$use_group) me$g_var,
+              "median", "lo", "hi")
+    out <- df[, intersect(keep, names(df)), drop = FALSE]
+    head(out, 20)
+  }, striped = TRUE, hover = TRUE, digits = 4)
 }
 
 shinyApp(ui, server)

@@ -42,15 +42,17 @@ example_data <- function() {
 # =============================================================================
 #' Load an RDS dataset with an EFS_time column
 #'
-#' Keeps rows with strictly positive `EFS_time`.
+#' Reads the file and runs it through [prep_data()] so that raw column names
+#' (`time_efs`, `event_status`, factor-encoded covariates, ...) are mapped to
+#' the modelling layout (`EFS_time`, `.status_bin`, binary dummies). Rows with
+#' non-positive `EFS_time` are dropped by `prep_data()`.
 #'
-#' @param path Path to an `.rds` file containing a `data.frame` with at least
-#'   `EFS_time` and `.status_bin` columns.
-#' @return The data.frame filtered to `EFS_time > 0`.
+#' @param path Path to an `.rds` file.
+#' @return The data.frame ready for [cure_model()] / [fit_cure_bayes()].
 #' @export
 load_data <- function(path) {
   df <- readRDS(path)
-  df <- subset(df, df$EFS_time > 0)
+  df <- prep_data(df)
   message(sprintf("Data loaded: %d observations (EFS_time > 0)", nrow(df)))
   df
 }
