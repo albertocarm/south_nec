@@ -120,6 +120,14 @@ prep_data <- function(df) {
 #' @param prior_intercept Scalar prior SD for both intercepts.
 #' @param stan_file Path to the `.stan` file. Defaults to the bundled model.
 #' @param spline_vars Optional named list of pre-computed spline bases.
+#' @param scale Logical. If `TRUE` (default, back-compatible) the design
+#'   matrices are internally centred and divided by their SD before entering
+#'   Stan. If `FALSE`, matrices are used as-is and `X_center` / `Z_center` are
+#'   set to 0 and `X_scale` / `Z_scale` to 1, so that downstream helpers
+#'   treating the linear predictor are identity transforms. Use `FALSE` when
+#'   predictors have already been standardised upstream via
+#'   [preprocess_predictors()], which lets every per-variable prior be
+#'   interpreted on the same standardised scale.
 #'
 #' @details
 #' `prior_*` accepts:
@@ -136,7 +144,8 @@ cure_model <- function(dat, clonogenic, kinetic,
                        prior_kinetic    = 1.0,
                        prior_intercept  = 2.5,
                        stan_file = stan_model_file(),
-                       spline_vars = NULL) {
+                       spline_vars = NULL,
+                       scale = TRUE) {
 
   all_terms <- unique(c(all.vars(clonogenic), all.vars(kinetic)))
   needed    <- unique(c("EFS_time", ".status_bin", all_terms))
@@ -179,13 +188,21 @@ cure_model <- function(dat, clonogenic, kinetic,
                   nrow(dat_cc), sum(dat_cc$.status_bin),
                   100 * mean(dat_cc$.status_bin), ncol(X_raw), ncol(Z_raw)))
 
-  X <- scale(X_raw); Z <- scale(Z_raw)
-  X_center <- attr(X, "scaled:center"); X_sc <- attr(X, "scaled:scale")
-  Z_center <- attr(Z, "scaled:center"); Z_sc <- attr(Z, "scaled:scale")
-  X[is.na(X)] <- X_raw[is.na(X)]
-  Z[is.na(Z)] <- Z_raw[is.na(Z)]
-  X_sc[is.na(X_sc) | X_sc == 0] <- 1
-  Z_sc[is.na(Z_sc) | Z_sc == 0] <- 1
+  if (isTRUE(scale)) {
+    X <- scale(X_raw); Z <- scale(Z_raw)
+    X_center <- attr(X, "scaled:center"); X_sc <- attr(X, "scaled:scale")
+    Z_center <- attr(Z, "scaled:center"); Z_sc <- attr(Z, "scaled:scale")
+    X[is.na(X)] <- X_raw[is.na(X)]
+    Z[is.na(Z)] <- Z_raw[is.na(Z)]
+    X_sc[is.na(X_sc) | X_sc == 0] <- 1
+    Z_sc[is.na(Z_sc) | Z_sc == 0] <- 1
+  } else {
+    X <- X_raw; Z <- Z_raw
+    X_center <- setNames(rep(0, ncol(X_raw)), X_names)
+    Z_center <- setNames(rep(0, ncol(Z_raw)), Z_names)
+    X_sc     <- setNames(rep(1, ncol(X_raw)), X_names)
+    Z_sc     <- setNames(rep(1, ncol(Z_raw)), Z_names)
+  }
 
   resolve_prior <- function(spec, var_names, label) {
     k <- length(var_names)
