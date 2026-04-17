@@ -381,11 +381,10 @@ ui <- page_sidebar(
               "GETNE/SOUTH-NEC study. It fits Bayesian Promotion Time Cure",
               "Models via Stan and ships this interactive Shiny front-end."),
             h6("Reference paper"),
-            p("Carmona-Bayonas A, Garcia-Carbonero R, Jimenez-Fonseca P,",
-              "et al.",
-              tags$em("Perioperative Chemotherapy and Long-Term Cure in",
+            p(tags$em("Perioperative Chemotherapy and Long-Term Cure in",
                       "Resected Grade 3 Gastroenteropancreatic Neuroendocrine",
-                      "Carcinomas: The GETNE/SOUTH-NEC Study."), "2026."),
+                      "Carcinomas: The GETNE/SOUTH-NEC Study."),
+              " Manuscript under review."),
             h6("What this app does"),
             tags$ul(
               tags$li("Fits a Bayesian promotion-time cure model (Yakovlev &",
@@ -402,11 +401,7 @@ ui <- page_sidebar(
             h6("Links"),
             p("Source code: ",
               tags$a(href = "https://github.com/albertocarm/rgetne",
-                     "github.com/albertocarm/rgetne")),
-            p("Citation: Carmona-Bayonas A et al. rgetne: Bayesian Promotion",
-              "Time Cure Model Toolkit, 2026.",
-              tags$a(href = "https://github.com/albertocarm/rgetne",
-                     "https://github.com/albertocarm/rgetne"))
+                     "github.com/albertocarm/rgetne"))
           )
         )
       )
@@ -431,9 +426,12 @@ server <- function(input, output, session) {
   # "ki67_percent__x__periop_therapy" for the ID while the original name is
   # preserved as label and as the key of the prior list passed to Stan.
   safe_id  <- function(v) gsub(":", "__x__", v, fixed = TRUE)
+  TIGHT_VARS <- c("ki67_percent", "periop_therapy")
   default_prior_for_var <- function(v) {
     parts <- strsplit(v, ":", fixed = TRUE)[[1]]
-    if (any(parts %in% CONTINUOUS_VARS)) 1.0 else 2.5
+    if (any(parts %in% TIGHT_VARS))     return(0.25)
+    if (any(parts %in% CONTINUOUS_VARS)) return(1.0)
+    2.5
   }
 
   build_prior_inputs <- function(id_prefix, selected_vars,

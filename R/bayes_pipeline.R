@@ -124,14 +124,20 @@ preprocess_predictors <- function(data, predictors,
 #' Default weakly-informative per-variable prior SDs
 #'
 #' Builds a named vector of prior SDs covering every column produced by
-#' `model.matrix(formula, data)`. Continuous predictors (as detected in the
-#' scaled training data) receive a tighter prior to stabilise the ridge
-#' induced by collinearity in the incidence / latency linear predictors;
-#' binary and categorical predictors receive a wider prior.
+#' `model.matrix(formula, data)`. Three tiers are applied in order:
 #'
-#' Users can override any entry by passing a named list or a pre-built named
-#' vector through the `prior_clonogenic` / `prior_kinetic` arguments of
-#' [fit_cure_bayes()].
+#' 1. every coefficient starts at `sd_binary` (binary / categorical default),
+#' 2. coefficients whose column name matches a scaled continuous predictor
+#'    are tightened to `sd_continuous`,
+#' 3. coefficients whose column name matches any variable in `tight_vars`
+#'    are tightened further to `sd_tight` (including interaction columns
+#'    that contain the variable name).
+#'
+#' The default `tight_vars = c("ki67_percent", "periop_therapy")` and
+#' `sd_tight = 0.25` mirror the hand-tuned priors used in the GETNE /
+#' SOUTH-NEC analysis, where those two covariates drive the clonogenic /
+#' kinetic posterior ridge. Pass `tight_vars = character(0)` to disable
+#' the third tier.
 #'
 #' @param design_names Character vector with the column names of the design
 #'   matrix.
@@ -141,17 +147,28 @@ preprocess_predictors <- function(data, predictors,
 #'   predictors. Default `1` is weakly informative on the Gelman scale.
 #' @param sd_binary Prior SD for coefficients of binary / categorical
 #'   predictors. Default `2.5` matches the common `rstanarm` convention.
+#' @param sd_tight Prior SD applied to every coefficient that matches a
+#'   name in `tight_vars`. Default `0.25`.
+#' @param tight_vars Character vector of variable names that should receive
+#'   the tight prior. Default `c("ki67_percent", "periop_therapy")`.
 #' @return Named numeric vector of length `length(design_names)`.
 #' @keywords internal
 default_prior_sds <- function(design_names,
                               continuous,
                               sd_continuous = 1.0,
-                              sd_binary     = 2.5) {
+                              sd_binary     = 2.5,
+                              sd_tight      = 0.25,
+                              tight_vars    = c("ki67_percent",
+                                                "periop_therapy")) {
   sds <- rep(sd_binary, length(design_names))
   names(sds) <- design_names
   for (nm in continuous) {
     hit <- grepl(nm, design_names, fixed = TRUE)
     sds[hit] <- sd_continuous
+  }
+  for (nm in tight_vars) {
+    hit <- grepl(nm, design_names, fixed = TRUE)
+    sds[hit] <- sd_tight
   }
   sds
 }

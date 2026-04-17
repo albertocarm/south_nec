@@ -139,11 +139,19 @@ prep_data <- function(df) {
 #'   columns; matching columns receive the supplied SD, the rest default
 #'   to 1.
 #'
+#' The default `prior_clonogenic` and `prior_kinetic` are named lists that
+#' set a tight SD of `0.25` on `ki67_percent` and `periop_therapy` (the
+#' covariates that tend to dominate the posterior ridge in this cure
+#' model) and leave every other coefficient at the fallback SD of `1.0`.
+#' Pass a scalar, a vector, or a custom list to override.
+#'
 #' @return An object of class `cure_spec`.
 #' @export
 cure_model <- function(dat, clonogenic, kinetic,
-                       prior_clonogenic = 1.0,
-                       prior_kinetic    = 1.0,
+                       prior_clonogenic = list(ki67_percent   = 0.25,
+                                               periop_therapy = 0.25),
+                       prior_kinetic    = list(ki67_percent   = 0.25,
+                                               periop_therapy = 0.25),
                        prior_intercept  = 2.5,
                        stan_file = stan_model_file(),
                        spline_vars = NULL,
@@ -536,7 +544,10 @@ test_correlation <- function(cfit) {
   fit <- cfit$fit; sp <- cfit$spec
 
   cat("\n=== TEST: Posterior cross-correlation (clonogenic vs kinetic) ===\n")
-  cat("    |r| > 0.6 = caution | |r| > 0.8 = severe\n\n")
+  cat("    |r| > 0.6 = caution | |r| > 0.8 = severe\n")
+  cat("    r^2 is the fraction of posterior variance shared between the two\n")
+  cat("    coefficients (overlap). |r| = 0.6 => 36% overlap;",
+      "|r| = 0.8 => 64%.\n\n")
 
   inc_pars <- c("beta0",  paste0("beta[",  seq_len(sp$stan_data$K_inc), "]"))
   lat_pars <- c("gamma0", paste0("gamma[", seq_len(sp$stan_data$K_lat), "]"), "alpha")
@@ -544,11 +555,16 @@ test_correlation <- function(cfit) {
   inc_labs <- c("Intercept (theta)",  sp$X_names)
   lat_labs <- c("Intercept (lambda)", sp$Z_names, "alpha")
 
-  post_mat <- as.matrix(fit)[, c(inc_pars, lat_pars)]
-  cor_mat  <- cor(post_mat)
-  rownames(cor_mat) <- colnames(cor_mat) <- c(inc_labs, lat_labs)
+  post_mat <- as.matrix(fit)[, c(inc_pars, lat_pars), drop = FALSE]
+  cor_mat  <- stats::cor(post_mat)
 
-  cross <- cor_mat[inc_labs, lat_labs, drop = FALSE]
+  # Positional indexing avoids collisions when the same variable name
+  # appears in both sub-models (e.g. ki67_percent in clonogenic and kinetic).
+  n_inc <- length(inc_pars)
+  n_lat <- length(lat_pars)
+  cross <- cor_mat[seq_len(n_inc), n_inc + seq_len(n_lat), drop = FALSE]
+  rownames(cross) <- inc_labs
+  colnames(cross) <- lat_labs
   print(round(cross, 3))
 
   shared <- intersect(sp$X_names, sp$Z_names)
@@ -556,21 +572,31 @@ test_correlation <- function(cfit) {
     cat("\n--- Shared variables ---\n")
     for (sv in shared) {
       ix <- which(sp$X_names == sv); iz <- which(sp$Z_names == sv)
-      r <- cor(as.matrix(fit)[, paste0("beta[",  ix, "]")],
-               as.matrix(fit)[, paste0("gamma[", iz, "]")])
-      cat(sprintf("  %s (clono vs kinet): r = %.3f\n", sv, r))
+      r <- as.numeric(stats::cor(
+        as.matrix(fit)[, paste0("beta[",  ix, "]")],
+        as.matrix(fit)[, paste0("gamma[", iz, "]")]))
+      cat(sprintf("  %s (clono vs kinet): r = %.3f | r^2 = %.3f (%.0f%% shared)\n",
+                  sv, r, r^2, 100 * r^2))
     }
   }
 
   problem <- which(abs(cross) > 0.6, arr.ind = TRUE)
+  # Drop self-pairs (same row and column label), which can only arise from
+  # the Intercept/alpha diagonals in pathological cases; cross is rectangular
+  # so true self-overlap is impossible after the positional fix, but we keep
+  # the guard to make the output robust to future refactors.
+  if (nrow(problem) > 0) {
+    keep <- inc_labs[problem[, 1]] != lat_labs[problem[, 2]]
+    problem <- problem[keep, , drop = FALSE]
+  }
   if (nrow(problem) > 0) {
     cat("\n!! PAIRS WITH |r| > 0.6:\n")
     for (k in seq_len(nrow(problem))) {
-      cat(sprintf("   %s <-> %s : r = %.3f%s\n",
+      r_val <- cross[problem[k, 1], problem[k, 2]]
+      cat(sprintf("   %s <-> %s : r = %.3f | r^2 = %.3f (%.0f%% shared)%s\n",
                   inc_labs[problem[k, 1]], lat_labs[problem[k, 2]],
-                  cross[problem[k, 1], problem[k, 2]],
-                  ifelse(abs(cross[problem[k, 1], problem[k, 2]]) > 0.8,
-                         " *** SEVERE ***", "")))
+                  r_val, r_val^2, 100 * r_val^2,
+                  ifelse(abs(r_val) > 0.8, " *** SEVERE ***", "")))
     }
   } else {
     cat("\n OK: No cross-correlations |r| > 0.6\n")
@@ -578,7 +604,8 @@ test_correlation <- function(cfit) {
 
   max_r <- max(abs(cross))
   verdict <- if (max_r > 0.8) "SEVERE" else if (max_r > 0.6) "CAUTION" else "OK"
-  cat(sprintf("\nMax |cross-r|: %.3f -> %s\n", max_r, verdict))
+  cat(sprintf("\nMax |cross-r|: %.3f | max r^2: %.3f (%.0f%% shared) -> %s\n",
+              max_r, max_r^2, 100 * max_r^2, verdict))
 
   invisible(cross)
 }
