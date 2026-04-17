@@ -1,6 +1,6 @@
 Package: rgetne
 Title: Bayesian Promotion Time Cure Model Toolkit and Interactive App
-Version: 0.1.1
+Version: 0.1.2
 Authors@R:
     person("Rocio", "Maintainer", email = "rocio@example.com", role = c("aut", "cre"))
 Description: Tools to fit Bayesian Promotion Time Cure Models

@@ -75,407 +75,415 @@ ui <- page_sidebar(
         "vertical-align: middle;"),
       sprintf("build %s",
               tryCatch(as.character(utils::packageVersion("rgetne")),
-                       error = function(e) "dev")),
-      " \u00b7 JCO theme")),
+                       error = function(e) "dev")))),
   theme = bs_theme(version = 5, bootswatch = "flatly", primary = "#2C3E50"),
   window_title = "rgetne :: Cure app",
 
   sidebar = sidebar(
     width = 380,
-    h4("Model Specification"),
 
-    accordion(
-      open = c("Clonogenic Model (Cure Fraction)",
-               "Kinetic Model (Latency)"),
+    selectInput(
+      "section", "View:",
+      choices = c("Data explorer"     = "data",
+                  "Kaplan-Meier"      = "km",
+                  "Cox models"        = "cox",
+                  "Cure model"        = "cure"),
+      selected = "data"),
 
-      accordion_panel(
-        "Data",
-        helpText("A preprocessed example dataset ships with the package."),
-        fileInput("user_file",
-                  "Optional: upload your own .rds",
-                  accept = ".rds"),
-        verbatimTextOutput("data_info")
-      ),
-
-      accordion_panel(
-        "Clonogenic Model (Cure Fraction)",
-        helpText("Covariates affecting the probability of ultimate cure",
-                 "(incidence, log-theta)."),
-        checkboxGroupInput("clono_vars", "Main effects:",
-                           choices  = MODEL_VARS,
-                           selected = MODEL_VARS),
-        hr(),
-        h6("Interaction (optional)"),
-        selectInput("int_var1", "Variable 1:",
-                    choices = c("None", MODEL_VARS),
-                    selected = "ki67_percent"),
-        selectInput("int_var2", "Variable 2:",
-                    choices = c("None", MODEL_VARS),
-                    selected = "periop_therapy"),
-        hr(),
-        h6("Prior SD per variable (clonogenic)"),
-        helpText(style = "font-size:0.82em;",
-                 "Continuous coefficients live on the standardised scale",
-                 "(see scaling method below); binary/categorical",
-                 "coefficients live on the raw 0/1 scale."),
-        uiOutput("prior_clono_ui")
-      ),
-
-      accordion_panel(
-        "Kinetic Model (Latency)",
-        helpText("Covariates affecting the time to recurrence for non-cured",
-                 "patients (log-lambda)."),
-        checkboxGroupInput("kinet_vars", "Main effects:",
-                           choices  = MODEL_VARS,
-                           selected = c("ki67_percent", "periop_therapy")),
-        hr(),
-        h6("Prior SD per variable (kinetic)"),
-        uiOutput("prior_kinet_ui")
-      ),
-
-      accordion_panel(
-        "MCMC & computation",
-        selectInput("scaling_method",
-                    "Scaling method for continuous predictors:",
-                    choices  = c("Gelman (mean, 2*SD)" = "gelman",
-                                 "Z-score (mean, SD)"  = "zscore"),
-                    selected = "gelman"),
-        numericInput("mcmc_chains", "Chains:",     value = 4,    min = 1, max = 8),
-        numericInput("mcmc_iter",   "Iterations:", value = 4000, step = 500),
-        numericInput("mcmc_warmup", "Warmup:",     value = 1000, step = 500),
-        numericInput("mcmc_adapt",  "Adapt delta:", value = 0.95,
-                     step = 0.01, min = 0.8, max = 0.999),
-        numericInput("prior_int", "Intercepts prior SD:",
-                     value = 2.5, step = 0.5, min = 0.1)
-      )
+    # ---- Data section sidebar -----------------------------------------------
+    conditionalPanel(
+      condition = "input.section == 'data'",
+      helpText(
+        "Pick a variable on the right to visualise its distribution.",
+        "The explorer prefers the factor-coded publication dataset when",
+        "available (richer set of covariates).")
     ),
 
-    hr(),
-    actionButton("run_model", "Run Bayesian Model",
-                 class = "btn-primary", width = "100%"),
-    helpText(
-      style = "color:#e67e22; font-size:0.85em; margin-top:6px;",
-      icon("clock"),
-      "Model fitting typically takes 3\u201310 minutes depending on data",
-      "size and MCMC settings. Please be patient while Stan compiles",
-      "and samples."
+    # ---- Kaplan-Meier section sidebar ---------------------------------------
+    conditionalPanel(
+      condition = "input.section == 'km'",
+      h5("KM Settings"),
+      helpText(
+        style = "font-size:0.82em; color:#555;",
+        "Uses the publication dataset (factor-coded).",
+        "Stratify, facet and filter to explore interactions."),
+      selectInput("km_outcome", "Outcome:",
+                  choices = c("Event-Free Survival" = "EFS",
+                              "Overall Survival"    = "OS"),
+                  selected = "EFS"),
+      selectInput("km_strata", "Stratify by (colour):",
+                  choices = "None", selected = "None"),
+      selectInput("km_facet", "Facet by (panels):",
+                  choices = "None", selected = "None"),
+      selectInput("km_filter_var", "Restrict to a subset of:",
+                  choices = "None", selected = "None"),
+      uiOutput("km_filter_levels_ui"),
+      numericInput("km_tmax", "Max time (blank = full range):",
+                   value = NA, min = 0, step = 1),
+      actionButton("km_btn", "Plot Kaplan-Meier",
+                   class = "btn-info", width = "100%")
     ),
-    uiOutput("precomputed_badge"),
-    br(),
-    uiOutput("formula_preview")
-  ),
 
-  navset_card_underline(
-    id = "main_tabs",
+    # ---- Cox section sidebar ------------------------------------------------
+    conditionalPanel(
+      condition = "input.section == 'cox'",
+      h5("Cox multivariable"),
+      helpText(
+        style = "font-size:0.82em; color:#555;",
+        "Fits a multivariable Cox model on the publication dataset for",
+        "both EFS and OS. Pick which endpoint to display below."),
+      radioButtons("cox_endpoint", "Endpoint to display:",
+                   choices = c("Event-Free Survival" = "efs",
+                               "Overall Survival"    = "os"),
+                   selected = "efs", inline = TRUE),
+      uiOutput("cox_vars_ui"),
+      actionButton("cox_btn", "Fit EFS + OS",
+                   class = "btn-success", width = "100%")
+    ),
 
-    # -------------------------------------------------------------------------
-    nav_panel(
-      "Overview",
-      layout_columns(
-        col_widths = c(6, 6),
-        card(
-          card_header("Clinical interpretation"),
-          card_body(
-            p("The Promotion Time Cure Model separates survival into two",
-              "biological layers:"),
-            tags$ul(
-              tags$li(strong("Clonogenic (cure fraction):"),
-                      " probability that a patient is completely cured",
-                      " (no residual clonogenic cells). Driven by the",
-                      " covariates in the clonogenic model."),
-              tags$li(strong("Kinetic (time-to-event):"),
-                      " for patients who are not cured, this is the speed",
-                      " at which disease recurs. Driven by the kinetic model.")
-            ),
-            p("Positive clonogenic coefficient = more clonogenic load =",
-              "lower cure probability. Positive kinetic coefficient =",
-              "longer time-to-recurrence (slower progression).")
-          )
+    # ---- Cure model section sidebar -----------------------------------------
+    conditionalPanel(
+      condition = "input.section == 'cure'",
+      h4("Model Specification"),
+
+      accordion(
+        open = c("Clonogenic Model (Cure Fraction)",
+                 "Kinetic Model (Latency)"),
+
+        accordion_panel(
+          "Data",
+          helpText("A preprocessed example dataset ships with the package."),
+          fileInput("user_file",
+                    "Optional: upload your own .rds",
+                    accept = ".rds"),
+          verbatimTextOutput("data_info")
         ),
-        card(
-          card_header("Technical notes"),
-          card_body(
-            p("Bayesian parametric survival model using a bounded cumulative",
-              "hazard (Yakovlev & Tsodikov)."),
-            tags$ul(
-              tags$li(strong("Sampler:"), " Hamiltonian Monte Carlo (NUTS)",
-                      " via rstan."),
-              tags$li(strong("Baseline:"), " Weibull latency."),
-              tags$li(strong("Priors:"), " weakly informative Normal priors",
-                      " on every coefficient, configurable on the sidebar.")
-            ),
-            p("Assess convergence via R-hat (< 1.01) and ESS (> 400) in the",
-              "Diagnostics tab.")
-          )
-        )
-      )
-    ),
 
-    # -------------------------------------------------------------------------
-    nav_panel(
-      "Data",
-      layout_columns(
-        col_widths = c(8, 4),
-        uiOutput("data_source_info"),
-        uiOutput("data_source_ui")
-      ),
-      layout_columns(
-        col_widths = c(7, 5),
-        card(
-          card_header("Preview (first 10 rows)"),
-          tableOutput("data_preview")
+        accordion_panel(
+          "Clonogenic Model (Cure Fraction)",
+          helpText("Covariates affecting the probability of ultimate cure",
+                   "(incidence, log-theta)."),
+          checkboxGroupInput("clono_vars", "Main effects:",
+                             choices  = MODEL_VARS,
+                             selected = MODEL_VARS),
+          hr(),
+          h6("Interaction (optional)"),
+          selectInput("int_var1", "Variable 1:",
+                      choices = c("None", MODEL_VARS),
+                      selected = "ki67_percent"),
+          selectInput("int_var2", "Variable 2:",
+                      choices = c("None", MODEL_VARS),
+                      selected = "periop_therapy"),
+          hr(),
+          h6("Prior SD per variable (clonogenic)"),
+          helpText(style = "font-size:0.82em;",
+                   "Continuous coefficients live on the standardised scale",
+                   "(see scaling method below); binary/categorical",
+                   "coefficients live on the raw 0/1 scale."),
+          uiOutput("prior_clono_ui")
         ),
-        card(
-          card_header("Descriptive statistics"),
-          tableOutput("data_desc_table")
+
+        accordion_panel(
+          "Kinetic Model (Latency)",
+          helpText("Covariates affecting the time to recurrence for non-cured",
+                   "patients (log-lambda)."),
+          checkboxGroupInput("kinet_vars", "Main effects:",
+                             choices  = MODEL_VARS,
+                             selected = c("ki67_percent", "periop_therapy")),
+          hr(),
+          h6("Prior SD per variable (kinetic)"),
+          uiOutput("prior_kinet_ui")
+        ),
+
+        accordion_panel(
+          "MCMC & computation",
+          selectInput("scaling_method",
+                      "Scaling method for continuous predictors:",
+                      choices  = c("Gelman (mean, 2*SD)" = "gelman",
+                                   "Z-score (mean, SD)"  = "zscore"),
+                      selected = "gelman"),
+          numericInput("mcmc_chains", "Chains:",     value = 4,    min = 1, max = 8),
+          numericInput("mcmc_iter",   "Iterations:", value = 4000, step = 500),
+          numericInput("mcmc_warmup", "Warmup:",     value = 1000, step = 500),
+          numericInput("mcmc_adapt",  "Adapt delta:", value = 0.95,
+                       step = 0.01, min = 0.8, max = 0.999),
+          numericInput("prior_int", "Intercepts prior SD:",
+                       value = 2.5, step = 0.5, min = 0.1)
         )
       ),
-      layout_columns(
-        col_widths = c(4, 8),
-        card(
-          card_header("Explore a variable"),
-          uiOutput("explore_var_ui"),
-          radioButtons("explore_type", "Plot type:",
-                       choices = c("Auto"      = "auto",
-                                   "Density"   = "density",
-                                   "Histogram" = "histogram",
-                                   "Bar"       = "bar",
-                                   "Pie"       = "pie"),
-                       selected = "auto", inline = TRUE)
-        ),
-        card(
-          card_header("Distribution"),
-          plotOutput("explore_plot", height = "380px")
-        )
-      ),
-      card(
-        card_header("Ki-67 density and categorical overview"),
-        layout_columns(
-          col_widths = c(6, 6),
-          plotOutput("overview_ki67", height = "320px"),
-          plotOutput("overview_efs",  height = "320px")
-        ),
-        plotOutput("overview_cats", height = "460px")
-      )
-    ),
 
-    # -------------------------------------------------------------------------
-    nav_panel(
-      "Kaplan-Meier",
-      layout_sidebar(
-        sidebar = sidebar(
-          width = 300,
-          h5("KM Settings"),
-          helpText(
-            style = "font-size:0.82em; color:#555;",
-            "Uses the publication dataset (factor-coded).",
-            "Stratify, facet and filter to explore interactions."),
-          selectInput("km_outcome", "Outcome:",
-                      choices = c("Event-Free Survival" = "EFS",
-                                  "Overall Survival"    = "OS"),
-                      selected = "EFS"),
-          selectInput("km_strata", "Stratify by (colour):",
-                      choices = "None", selected = "None"),
-          selectInput("km_facet", "Facet by (panels):",
-                      choices = "None", selected = "None"),
-          selectInput("km_filter_var", "Restrict to a subset of:",
-                      choices = "None", selected = "None"),
-          uiOutput("km_filter_levels_ui"),
-          numericInput("km_tmax", "Max time (blank = full range):",
-                       value = NA, min = 0, step = 1),
-          actionButton("km_btn", "Plot Kaplan-Meier",
-                       class = "btn-info", width = "100%")
-        ),
-        card(
-          card_header(textOutput("km_card_title")),
-          plotOutput("km_plot", height = "520px")
-        )
-      )
-    ),
-
-    # -------------------------------------------------------------------------
-    nav_panel(
-      "Cox models",
-      layout_sidebar(
-        sidebar = sidebar(
-          width = 320,
-          h5("Cox multivariable"),
-          helpText(
-            style = "font-size:0.82em; color:#555;",
-            "Fits a multivariable Cox model on the publication dataset for",
-            "both EFS and OS, builds forest plots and a combined gt table."),
-          uiOutput("cox_vars_ui"),
-          actionButton("cox_btn", "Fit EFS + OS",
-                       class = "btn-success", width = "100%")
-        ),
-        navset_card_underline(
-          nav_panel(
-            "Forest plots",
-            layout_columns(
-              col_widths = c(6, 6),
-              card(card_header("Event-Free Survival"),
-                   plotOutput("cox_plot_efs", height = "440px")),
-              card(card_header("Overall Survival"),
-                   plotOutput("cox_plot_os",  height = "440px"))
-            )
-          ),
-          nav_panel(
-            "Combined table",
-            card(card_header("Multivariable Cox Models (EFS + OS)"),
-                 gt::gt_output("cox_table"))
-          )
-        )
-      )
-    ),
-
-    # -------------------------------------------------------------------------
-    nav_panel(
-      "Cure model \u2014 results",
-      verbatimTextOutput("summary_out")
-    ),
-
-    # -------------------------------------------------------------------------
-    nav_panel(
-      "Cure model \u2014 diagnostics",
-      h5("MCMC trace plots"),
-      plotOutput("mcmc_trace_plot", height = "320px"),
       hr(),
-      layout_columns(
-        col_widths = c(6, 6),
-        card(card_header("MCMC convergence"),
-             verbatimTextOutput("mcmc_out")),
-        card(card_header("Posterior cross-correlation"),
-             verbatimTextOutput("cor_out"))
-      )
-    ),
-
-    # -------------------------------------------------------------------------
-    nav_panel(
-      "Cure model \u2014 identifiability",
-      helpText("The incremental censoring test refits the model at decreasing",
-               "follow-up quantiles to check whether the cure fraction is",
-               "identifiable from the available events. This can be slow."),
-      actionButton("run_cens", "Run censoring sensitivity",
-                   class = "btn-warning"),
+      actionButton("run_model", "Run Bayesian Model",
+                   class = "btn-primary", width = "100%"),
       helpText(
         style = "color:#e67e22; font-size:0.85em; margin-top:6px;",
         icon("clock"),
-        "This test refits the model multiple times at different",
-        "follow-up horizons. It can take 5\u201315 minutes to complete."
+        "Model fitting typically takes 3\u201310 minutes depending on data",
+        "size and MCMC settings. Please be patient while Stan compiles",
+        "and samples."
       ),
-      hr(),
-      verbatimTextOutput("cens_out")
-    ),
+      uiOutput("precomputed_badge"),
+      br(),
+      uiOutput("formula_preview")
+    )
+  ),
 
-    # -------------------------------------------------------------------------
-    nav_panel(
-      "Cure model \u2014 visualisations",
-      layout_sidebar(
-        sidebar = sidebar(
-          width = 300,
-          h5("Plot configuration"),
-          selectInput("var_mod", "Continuous X-axis:",
-                      choices  = CONTINUOUS_VARS,
-                      selected = "ki67_percent"),
-          selectInput("var_contraste", "Stratification variable:",
-                      choices  = BINARY_VARS,
-                      selected = "periop_therapy"),
-          numericInput("val_expuesto", "Exposed level:",     value = 1),
-          numericInput("val_referencia", "Reference level:", value = 0),
-          actionButton("plot_btn", "Generate plots", class = "btn-success")
-        ),
-        card(
-          card_header("Cure probability by continuous variable (reference group)"),
-          plotOutput("plot_triptico_ref", height = "360px")
-        ),
-        card(
-          card_header("Cure probability by continuous variable (exposed group)"),
-          plotOutput("plot_triptico_exp", height = "360px")
-        ),
-        card(
-          card_header("Cure odds ratio (exposed vs reference)"),
-          plotOutput("plot_or_cure", height = "500px")
-        ),
-        card(
-          card_header("Baseline population survival curve"),
-          plotOutput("plot_surv", height = "360px")
-        )
+  # ---------------------------------------------------------------------------
+  # DATA section
+  # ---------------------------------------------------------------------------
+  conditionalPanel(
+    condition = "input.section == 'data'",
+    uiOutput("data_source_info"),
+    layout_columns(
+      col_widths = c(7, 5),
+      card(
+        card_header("Preview (first 10 rows)"),
+        tableOutput("data_preview")
+      ),
+      card(
+        card_header("Descriptive statistics"),
+        tableOutput("data_desc_table")
       )
     ),
-
-    # -------------------------------------------------------------------------
-    nav_panel(
-      "Cure model \u2014 marginal effects",
-      layout_sidebar(
-        sidebar = sidebar(
-          width = 320,
-          h5("Scenario grid"),
-          helpText(style = "font-size:0.85em;",
-                   "Pick a continuous X-axis (scanned over its observed",
-                   "range) and an optional binary variable to split the",
-                   "lines. All other covariates are held fixed at their",
-                   "sample mean (continuous) or 0 (binary)."),
-          selectInput("me_target", "Quantity:",
-                      choices = c("Cure probability"  = "cure_prob",
-                                  "Clonogen count"    = "theta",
-                                  "Latency scale"     = "lambda",
-                                  "Median event time" = "median_time"),
-                      selected = "cure_prob"),
-          selectInput("me_xvar", "Continuous X-axis:",
-                      choices  = CONTINUOUS_VARS,
-                      selected = "ki67_percent"),
-          selectInput("me_groupvar", "Group by (binary):",
-                      choices  = c("None", BINARY_VARS),
-                      selected = "periop_therapy"),
-          numericInput("me_ngrid", "Grid resolution:",
-                       value = 40, min = 5, max = 200, step = 5),
-          actionButton("me_btn", "Compute marginal effects",
-                       class = "btn-success", width = "100%")
-        ),
-        card(
-          card_header("Posterior expected prediction"),
-          plotOutput("me_plot", height = "480px")
-        ),
-        card(
-          card_header("Summary table"),
-          tableOutput("me_table")
-        )
+    layout_columns(
+      col_widths = c(4, 8),
+      card(
+        card_header("Explore a variable"),
+        uiOutput("explore_var_ui"),
+        radioButtons("explore_type", "Plot type:",
+                     choices = c("Auto"      = "auto",
+                                 "Density"   = "density",
+                                 "Histogram" = "histogram",
+                                 "Bar"       = "bar",
+                                 "Pie"       = "pie"),
+                     selected = "auto", inline = TRUE)
+      ),
+      card(
+        card_header("Distribution"),
+        plotOutput("explore_plot", height = "460px")
       )
-    ),
+    )
+  ),
 
-    # -------------------------------------------------------------------------
-    nav_panel(
-      "About",
-      layout_columns(
-        col_widths = c(12),
-        card(
-          card_header("About rgetne"),
-          card_body(
-            p(strong("rgetne"), "is the reproducibility companion for the",
-              "GETNE/SOUTH-NEC study. It fits Bayesian Promotion Time Cure",
-              "Models via Stan and ships this interactive Shiny front-end."),
-            h6("Reference paper"),
-            p(tags$em("Perioperative Chemotherapy and Long-Term Cure in",
-                      "Resected Grade 3 Gastroenteropancreatic Neuroendocrine",
-                      "Carcinomas: The GETNE/SOUTH-NEC Study."),
-              " Manuscript under review."),
-            h6("What this app does"),
-            tags$ul(
-              tags$li("Fits a Bayesian promotion-time cure model (Yakovlev &",
-                      "Tsodikov) that separates treatment effects into a",
-                      tags$strong("clonogenic"), "(cure fraction) and",
-                      tags$strong("kinetic"), "(time-to-recurrence) component."),
-              tags$li("Uses data from 176 patients with stage I-III GEP-NEC",
-                      "from the Spanish GETNE registry (R-GETNE)."),
-              tags$li("Supports interactive covariate selection, interactions,",
-                      "per-variable priors, MCMC diagnostics, Kaplan-Meier",
-                      "plots, cure probability curves, and identifiability",
-                      "tests.")
-            ),
-            h6("Links"),
-            p("Source code: ",
-              tags$a(href = "https://github.com/albertocarm/rgetne",
-                     "github.com/albertocarm/rgetne"))
+  # ---------------------------------------------------------------------------
+  # KM section
+  # ---------------------------------------------------------------------------
+  conditionalPanel(
+    condition = "input.section == 'km'",
+    card(
+      card_header(textOutput("km_card_title")),
+      plotOutput("km_plot", height = "640px")
+    )
+  ),
+
+  # ---------------------------------------------------------------------------
+  # COX section
+  # ---------------------------------------------------------------------------
+  conditionalPanel(
+    condition = "input.section == 'cox'",
+    card(
+      card_header(textOutput("cox_card_title")),
+      plotOutput("cox_plot", height = "520px")
+    ),
+    card(
+      card_header("Multivariable Cox Models (EFS + OS)"),
+      gt::gt_output("cox_table")
+    )
+  ),
+
+  # ---------------------------------------------------------------------------
+  # CURE MODEL section (nested navset)
+  # ---------------------------------------------------------------------------
+  conditionalPanel(
+    condition = "input.section == 'cure'",
+    navset_card_underline(
+      id = "cure_tabs",
+
+      nav_panel(
+        "Overview",
+        layout_columns(
+          col_widths = c(6, 6),
+          card(
+            card_header("Clinical interpretation"),
+            card_body(
+              p("The Promotion Time Cure Model separates survival into two",
+                "biological layers:"),
+              tags$ul(
+                tags$li(strong("Clonogenic (cure fraction):"),
+                        " probability that a patient is completely cured",
+                        " (no residual clonogenic cells). Driven by the",
+                        " covariates in the clonogenic model."),
+                tags$li(strong("Kinetic (time-to-event):"),
+                        " for patients who are not cured, this is the speed",
+                        " at which disease recurs. Driven by the kinetic model.")
+              ),
+              p("Positive clonogenic coefficient = more clonogenic load =",
+                "lower cure probability. Positive kinetic coefficient =",
+                "longer time-to-recurrence (slower progression).")
+            )
+          ),
+          card(
+            card_header("Technical notes"),
+            card_body(
+              p("Bayesian parametric survival model using a bounded cumulative",
+                "hazard (Yakovlev & Tsodikov)."),
+              tags$ul(
+                tags$li(strong("Sampler:"), " Hamiltonian Monte Carlo (NUTS)",
+                        " via rstan."),
+                tags$li(strong("Baseline:"), " Weibull latency."),
+                tags$li(strong("Priors:"), " weakly informative Normal priors",
+                        " on every coefficient, configurable on the sidebar.")
+              ),
+              p("Assess convergence via R-hat (< 1.01) and ESS (> 400) in the",
+                "Diagnostics tab.")
+            )
+          )
+        )
+      ),
+
+      nav_panel(
+        "Results",
+        verbatimTextOutput("summary_out")
+      ),
+
+      nav_panel(
+        "Diagnostics",
+        h5("MCMC trace plots"),
+        plotOutput("mcmc_trace_plot", height = "320px"),
+        hr(),
+        layout_columns(
+          col_widths = c(6, 6),
+          card(card_header("MCMC convergence"),
+               verbatimTextOutput("mcmc_out")),
+          card(card_header("Posterior cross-correlation"),
+               verbatimTextOutput("cor_out"))
+        )
+      ),
+
+      nav_panel(
+        "Identifiability",
+        helpText("The incremental censoring test refits the model at decreasing",
+                 "follow-up quantiles to check whether the cure fraction is",
+                 "identifiable from the available events. This can be slow."),
+        actionButton("run_cens", "Run censoring sensitivity",
+                     class = "btn-warning"),
+        helpText(
+          style = "color:#e67e22; font-size:0.85em; margin-top:6px;",
+          icon("clock"),
+          "This test refits the model multiple times at different",
+          "follow-up horizons. It can take 5\u201315 minutes to complete."
+        ),
+        hr(),
+        verbatimTextOutput("cens_out")
+      ),
+
+      nav_panel(
+        "Visualisations",
+        layout_sidebar(
+          sidebar = sidebar(
+            width = 300,
+            h5("Plot configuration"),
+            selectInput("var_mod", "Continuous X-axis:",
+                        choices  = CONTINUOUS_VARS,
+                        selected = "ki67_percent"),
+            selectInput("var_contraste", "Stratification variable:",
+                        choices  = BINARY_VARS,
+                        selected = "periop_therapy"),
+            numericInput("val_expuesto", "Exposed level:",     value = 1),
+            numericInput("val_referencia", "Reference level:", value = 0),
+            actionButton("plot_btn", "Generate plots", class = "btn-success")
+          ),
+          card(
+            card_header("Cure probability by continuous variable (reference group)"),
+            plotOutput("plot_triptico_ref", height = "360px")
+          ),
+          card(
+            card_header("Cure probability by continuous variable (exposed group)"),
+            plotOutput("plot_triptico_exp", height = "360px")
+          ),
+          card(
+            card_header("Cure odds ratio (exposed vs reference)"),
+            plotOutput("plot_or_cure", height = "500px")
+          ),
+          card(
+            card_header("Baseline population survival curve"),
+            plotOutput("plot_surv", height = "360px")
+          )
+        )
+      ),
+
+      nav_panel(
+        "Marginal effects",
+        layout_sidebar(
+          sidebar = sidebar(
+            width = 320,
+            h5("Scenario grid"),
+            helpText(style = "font-size:0.85em;",
+                     "Pick a continuous X-axis (scanned over its observed",
+                     "range) and an optional binary variable to split the",
+                     "lines. All other covariates are held fixed at their",
+                     "sample mean (continuous) or 0 (binary)."),
+            selectInput("me_target", "Quantity:",
+                        choices = c("Cure probability"  = "cure_prob",
+                                    "Clonogen count"    = "theta",
+                                    "Latency scale"     = "lambda",
+                                    "Median event time" = "median_time"),
+                        selected = "cure_prob"),
+            selectInput("me_xvar", "Continuous X-axis:",
+                        choices  = CONTINUOUS_VARS,
+                        selected = "ki67_percent"),
+            selectInput("me_groupvar", "Group by (binary):",
+                        choices  = c("None", BINARY_VARS),
+                        selected = "periop_therapy"),
+            numericInput("me_ngrid", "Grid resolution:",
+                         value = 40, min = 5, max = 200, step = 5),
+            actionButton("me_btn", "Compute marginal effects",
+                         class = "btn-success", width = "100%")
+          ),
+          card(
+            card_header("Posterior expected prediction"),
+            plotOutput("me_plot", height = "480px")
+          ),
+          card(
+            card_header("Summary table"),
+            tableOutput("me_table")
+          )
+        )
+      ),
+
+      nav_panel(
+        "About",
+        layout_columns(
+          col_widths = c(12),
+          card(
+            card_header("About rgetne"),
+            card_body(
+              p(strong("rgetne"), "is the reproducibility companion for the",
+                "GETNE/SOUTH-NEC study. It fits Bayesian Promotion Time Cure",
+                "Models via Stan and ships this interactive Shiny front-end."),
+              h6("Reference paper"),
+              p(tags$em("Perioperative Chemotherapy and Long-Term Cure in",
+                        "Resected Grade 3 Gastroenteropancreatic Neuroendocrine",
+                        "Carcinomas: The GETNE/SOUTH-NEC Study."),
+                " Manuscript under review."),
+              h6("What this app does"),
+              tags$ul(
+                tags$li("Fits a Bayesian promotion-time cure model (Yakovlev &",
+                        "Tsodikov) that separates treatment effects into a",
+                        tags$strong("clonogenic"), "(cure fraction) and",
+                        tags$strong("kinetic"), "(time-to-recurrence) component."),
+                tags$li("Uses data from 176 patients with stage I-III GEP-NEC",
+                        "from the Spanish GETNE registry (R-GETNE)."),
+                tags$li("Supports interactive covariate selection, interactions,",
+                        "per-variable priors, MCMC diagnostics, Kaplan-Meier",
+                        "plots, cure probability curves, and identifiability",
+                        "tests.")
+              ),
+              h6("Links"),
+              p("Source code: ",
+                tags$a(href = "https://github.com/albertocarm/rgetne",
+                       "github.com/albertocarm/rgetne"))
+            )
           )
         )
       )
@@ -700,10 +708,6 @@ server <- function(input, output, session) {
       sprintf(" (n = %d, %d columns).", n, k))
   })
 
-  output$data_source_ui <- renderUI({
-    NULL
-  })
-
   output$data_preview <- renderTable({
     df <- data_explorer_df(); req(df)
     utils::head(df, 10)
@@ -752,33 +756,6 @@ server <- function(input, output, session) {
     df <- data_explorer_df(); req(df)
     v  <- input$explore_var; req(v, v %in% names(df))
     plot_variable(df, v, type = input$explore_type %||% "auto")
-  })
-
-  output$overview_ki67 <- renderPlot({
-    df <- data_explorer_df(); req(df)
-    v <- if ("Ki67_Index" %in% names(df)) "Ki67_Index"
-         else if ("ki67_percent" %in% names(df)) "ki67_percent"
-         else return(NULL)
-    plot_variable(df, v, type = "density",
-                  title = "Ki-67 proliferation index")
-  })
-
-  output$overview_efs <- renderPlot({
-    df <- data_explorer_df(); req(df)
-    v <- if ("EFS_Time" %in% names(df)) "EFS_Time"
-         else if ("EFS_time" %in% names(df)) "EFS_time"
-         else return(NULL)
-    plot_variable(df, v, type = "density",
-                  title = "Event-free survival time")
-  })
-
-  output$overview_cats <- renderPlot({
-    df <- data_explorer_df(); req(df)
-    cat_vars <- setdiff(pub_factor_vars(), "Ki67_Q4")
-    if (length(cat_vars) == 0) return(NULL)
-    plots <- lapply(cat_vars, function(v) plot_variable(df, v, type = "bar"))
-    gridExtra::grid.arrange(grobs = plots,
-                            ncol = min(3, length(plots)))
   })
 
   # --- Kaplan-Meier (publication dataset) ------------------------------------
@@ -910,12 +887,20 @@ server <- function(input, output, session) {
     })
   })
 
-  output$cox_plot_efs <- renderPlot({
-    req(rval$cox_res); rval$cox_res$plot_efs
+  output$cox_card_title <- renderText({
+    ep <- input$cox_endpoint %||% "efs"
+    if (is.null(rval$cox_res))
+      return("Cox forest plot (fit the model to display)")
+    if (ep == "os") "Cox forest plot \u2014 Overall Survival"
+    else            "Cox forest plot \u2014 Event-Free Survival"
   })
-  output$cox_plot_os <- renderPlot({
-    req(rval$cox_res); rval$cox_res$plot_os
+
+  output$cox_plot <- renderPlot({
+    req(rval$cox_res)
+    ep <- input$cox_endpoint %||% "efs"
+    if (ep == "os") rval$cox_res$plot_os else rval$cox_res$plot_efs
   })
+
   output$cox_table <- gt::render_gt({
     req(rval$cox_res); rval$cox_res$table
   })

@@ -174,10 +174,32 @@ res$plot_os    # ggplot forest plot, OS
 res$table      # gt combined HR (95% CI) + p-value table
 ```
 
-The same workflow is exposed in the Shiny app under the **Cox models** tab
-(covariate multi-select, forest plots and combined gt table) and the
-redesigned **Kaplan-Meier** tab (outcome selector, stratification, faceting,
-subset filter and log-rank p-values per panel).
+The same workflow is exposed in the Shiny app under the **Cox models** view
+(covariate multi-select, a radio toggle that flips the main panel between the
+EFS and OS forest plot, and a combined gt table below) and the redesigned
+**Kaplan-Meier** view (outcome selector, stratification, faceting, subset
+filter and log-rank p-values per panel).
+
+### App navigation
+
+The sidebar now drives a single top-level view selector with four choices:
+
+- **Data explorer** -- preview, descriptive statistics and per-variable
+  distribution plots (density / histogram / bar / pie, auto-picked by type).
+- **Kaplan-Meier** -- outcome, stratify, facet and subset controls all in the
+  sidebar, a single large KM plot on the right.
+- **Cox models** -- covariate multi-select, `Fit EFS + OS` button and the EFS
+  vs OS radio toggle that decides which forest plot is shown in the main
+  panel; the combined gt table is rendered directly underneath.
+- **Cure model** -- the full Bayesian workflow (data upload, clonogenic and
+  kinetic specifications, per-variable priors, MCMC settings, run button) is
+  collected in the sidebar; the main panel exposes an internal set of tabs
+  for *Overview*, *Results*, *Diagnostics*, *Identifiability*,
+  *Visualisations*, *Marginal effects* and *About*.
+
+Picking a view in the sidebar replaces the entire main panel, so the
+classical (KM, Cox) and Bayesian cure-model sections never compete for
+screen real estate.
 
 ### 5. Define and fit the cure model
 
