@@ -66,7 +66,17 @@ BINARY_VARS <- setdiff(MODEL_VARS, CONTINUOUS_VARS)
 # UI
 # -----------------------------------------------------------------------------
 ui <- page_sidebar(
-  title = "Bayesian Promotion Time Cure Model",
+  title = tagList(
+    span("Bayesian Promotion Time Cure Model"),
+    span(
+      style = paste(
+        "font-size: 0.7em; margin-left: 12px; padding: 2px 10px;",
+        "background:#27ae60; color:white; border-radius: 10px;",
+        "vertical-align: middle;"),
+      sprintf("build %s",
+              tryCatch(as.character(utils::packageVersion("rgetne")),
+                       error = function(e) "dev")),
+      " \u00b7 JCO theme")),
   theme = bs_theme(version = 5, bootswatch = "flatly", primary = "#2C3E50"),
   window_title = "rgetne :: Cure app",
 
@@ -802,6 +812,27 @@ server <- function(input, output, session) {
     } else "Kaplan-Meier estimate"
   })
 
+  # Prevent picking the same variable for strata and facet: when the user
+  # chooses one dropdown, collapse the other to "None" if they collide.
+  observeEvent(input$km_strata, {
+    if (!is.null(input$km_facet) && !is.null(input$km_strata) &&
+        input$km_strata != "None" && input$km_strata == input$km_facet) {
+      updateSelectInput(session, "km_facet", selected = "None")
+      showNotification(
+        "Stratify and facet cannot be the same variable; facet reset.",
+        type = "warning", duration = 4)
+    }
+  }, ignoreInit = TRUE)
+  observeEvent(input$km_facet, {
+    if (!is.null(input$km_facet) && !is.null(input$km_strata) &&
+        input$km_facet != "None" && input$km_facet == input$km_strata) {
+      updateSelectInput(session, "km_strata", selected = "None")
+      showNotification(
+        "Stratify and facet cannot be the same variable; stratify reset.",
+        type = "warning", duration = 4)
+    }
+  }, ignoreInit = TRUE)
+
   output$km_plot <- renderPlot({
     req(km_state$triggered, rval$pub)
     outcome <- input$km_outcome %||% "EFS"
@@ -811,6 +842,9 @@ server <- function(input, output, session) {
                input$km_strata else NULL
     fct   <- if (!is.null(input$km_facet) && input$km_facet != "None")
                input$km_facet else NULL
+    if (!is.null(strat) && !is.null(fct) && identical(strat, fct)) {
+      fct <- NULL
+    }
     fvar  <- if (!is.null(input$km_filter_var) && input$km_filter_var != "None")
                input$km_filter_var else NULL
     flev  <- if (!is.null(fvar)) input$km_filter_levels else NULL

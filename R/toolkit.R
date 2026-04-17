@@ -1265,37 +1265,65 @@ plot_km <- function(dat,
   has_strata <- !is.null(strata) && strata %in% names(d)
   has_facet  <- !is.null(facet_by) && facet_by %in% names(d)
 
+  single_curve_df <- function(sf, lbl) {
+    n <- length(sf$time)
+    if (n == 0L) {
+      return(data.frame(time = numeric(0), surv = numeric(0),
+                        cens = logical(0), group = character(0),
+                        stringsAsFactors = FALSE))
+    }
+    data.frame(
+      time  = c(0, sf$time),
+      surv  = c(1, sf$surv),
+      cens  = c(FALSE, sf$n.censor > 0),
+      group = rep(lbl, n + 1L),
+      stringsAsFactors = FALSE
+    )
+  }
+
   build_curve <- function(df, group_col) {
+    if (nrow(df) == 0L) {
+      return(data.frame(time = numeric(0), surv = numeric(0),
+                        cens = logical(0), group = character(0),
+                        stringsAsFactors = FALSE))
+    }
     so <- survival::Surv(df$..time.., df$..status..)
     if (is.null(group_col)) {
-      sf <- survival::survfit(so ~ 1)
-      data.frame(
-        time  = c(0, sf$time),
-        surv  = c(1, sf$surv),
-        cens  = c(FALSE, sf$n.censor > 0),
-        group = "Overall",
-        stringsAsFactors = FALSE
-      )
-    } else {
-      g <- factor(df[[group_col]])
-      sf <- survival::survfit(so ~ g)
-      strata_lengths <- sf$strata
-      grp_labels <- sub("^g=", "", names(strata_lengths))
-      grp_vec <- rep(grp_labels, times = unname(strata_lengths))
-      out <- data.frame(
-        time  = sf$time,
-        surv  = sf$surv,
-        cens  = sf$n.censor > 0,
-        group = grp_vec,
-        stringsAsFactors = FALSE
-      )
-      # Prepend (0, 1) for each stratum so curves start at the top-left.
-      starts <- do.call(rbind, lapply(split(out, out$group), function(z) {
-        data.frame(time = 0, surv = 1, cens = FALSE,
-                   group = z$group[1], stringsAsFactors = FALSE)
-      }))
-      rbind(starts, out)
+      return(single_curve_df(survival::survfit(so ~ 1), "Overall"))
     }
+    g <- factor(df[[group_col]])
+    g <- droplevels(g)
+    # Fall back to a single curve when fewer than 2 levels are present in
+    # this (possibly faceted) subset: survfit(~ g) would either refuse or
+    # return a stratum structure with mismatched lengths.
+    if (nlevels(g) < 2L) {
+      lbl <- if (nlevels(g) == 1L) levels(g)[1] else "Overall"
+      return(single_curve_df(survival::survfit(so ~ 1), lbl))
+    }
+    sf <- survival::survfit(so ~ g)
+    strata_lengths <- sf$strata
+    if (is.null(strata_lengths) || length(sf$time) == 0L) {
+      return(single_curve_df(sf, levels(g)[1]))
+    }
+    grp_labels <- sub("^g=", "", names(strata_lengths))
+    grp_vec <- rep(grp_labels, times = unname(strata_lengths))
+    if (length(grp_vec) != length(sf$time)) {
+      # Defensive fallback: if lengths still disagree for any reason,
+      # recycle so that data.frame() does not crash.
+      grp_vec <- rep_len(grp_vec, length(sf$time))
+    }
+    out <- data.frame(
+      time  = sf$time,
+      surv  = sf$surv,
+      cens  = sf$n.censor > 0,
+      group = grp_vec,
+      stringsAsFactors = FALSE
+    )
+    starts <- do.call(rbind, lapply(split(out, out$group), function(z) {
+      data.frame(time = 0, surv = 1, cens = FALSE,
+                 group = z$group[1], stringsAsFactors = FALSE)
+    }))
+    rbind(starts, out)
   }
 
   logrank_p <- function(df, group_col) {
