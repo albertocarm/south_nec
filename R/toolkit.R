@@ -1225,16 +1225,23 @@ plot_km <- function(dat,
   g <- ggplot2::ggplot(
         curves,
         ggplot2::aes(x = .data$time, y = .data$surv, color = .data$group)) +
-    ggplot2::geom_step(linewidth = 0.9) +
+    ggplot2::geom_step(linewidth = 1.1) +
     ggplot2::geom_point(
       data = curves[curves$cens, , drop = FALSE],
-      shape = 3, size = 2, show.legend = FALSE) +
+      shape = 3, size = 2.5, stroke = 0.9, show.legend = FALSE) +
     ggplot2::coord_cartesian(xlim = xlim_r, ylim = c(0, 1)) +
     ggplot2::labs(x = xlab, y = ylab, title = title, color = strata) +
-    ggplot2::theme_classic(base_size = 12) +
+    ggplot2::theme_classic(base_size = 15) +
     ggplot2::theme(
-      plot.title    = ggplot2::element_text(hjust = 0.5, face = "bold"),
-      legend.position = if (has_strata) "bottom" else "none")
+      plot.title       = ggplot2::element_text(hjust = 0.5, face = "bold",
+                                               size = 17),
+      axis.title       = ggplot2::element_text(size = 14),
+      axis.text        = ggplot2::element_text(size = 12, color = "grey20"),
+      strip.text       = ggplot2::element_text(size = 14, face = "bold"),
+      strip.background = ggplot2::element_rect(fill = "grey92", color = NA),
+      legend.title     = ggplot2::element_text(size = 13, face = "bold"),
+      legend.text      = ggplot2::element_text(size = 12),
+      legend.position  = if (has_strata) "bottom" else "none")
 
   if (!is.null(palette)) {
     g <- g + ggplot2::scale_color_manual(values = palette)
@@ -1248,7 +1255,7 @@ plot_km <- function(dat,
       ggplot2::aes(x = xlim_r[1] + diff(xlim_r) * 0.02,
                    y = 0.08,
                    label = .data$label),
-      inherit.aes = FALSE, hjust = 0, size = 3.3, color = "grey25")
+      inherit.aes = FALSE, hjust = 0, size = 4.5, color = "grey25")
   }
 
   g

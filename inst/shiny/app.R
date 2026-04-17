@@ -303,13 +303,13 @@ ui <- page_sidebar(
 
     # -------------------------------------------------------------------------
     nav_panel(
-      "Results summary",
+      "Cure model \u2014 results",
       verbatimTextOutput("summary_out")
     ),
 
     # -------------------------------------------------------------------------
     nav_panel(
-      "Diagnostics",
+      "Cure model \u2014 diagnostics",
       h5("MCMC trace plots"),
       plotOutput("mcmc_trace_plot", height = "320px"),
       hr(),
@@ -324,7 +324,7 @@ ui <- page_sidebar(
 
     # -------------------------------------------------------------------------
     nav_panel(
-      "Identifiability",
+      "Cure model \u2014 identifiability",
       helpText("The incremental censoring test refits the model at decreasing",
                "follow-up quantiles to check whether the cure fraction is",
                "identifiable from the available events. This can be slow."),
@@ -342,7 +342,7 @@ ui <- page_sidebar(
 
     # -------------------------------------------------------------------------
     nav_panel(
-      "Visualisations",
+      "Cure model \u2014 visualisations",
       layout_sidebar(
         sidebar = sidebar(
           width = 300,
@@ -378,7 +378,7 @@ ui <- page_sidebar(
 
     # -------------------------------------------------------------------------
     nav_panel(
-      "Marginal effects",
+      "Cure model \u2014 marginal effects",
       layout_sidebar(
         sidebar = sidebar(
           width = 320,

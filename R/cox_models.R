@@ -163,14 +163,14 @@ cox_forest_plot <- function(fp, title = "Forest plot",
     ggplot2::geom_errorbarh(
       ggplot2::aes(xmin = .data$CI_Lower, xmax = .data$CI_Upper,
                    color = .data$sig_f),
-      height = 0.2, linewidth = 0.8, show.legend = FALSE) +
+      height = 0.25, linewidth = 1, show.legend = FALSE) +
     ggplot2::geom_point(
       ggplot2::aes(shape = .data$sig_f, color = .data$sig_f),
-      size = 3.5, show.legend = FALSE) +
+      size = 4.5, show.legend = FALSE) +
     ggplot2::geom_text(
       ggplot2::aes(x = xmax_ci * 1.1, label = .data$p_lbl,
                    color = .data$sig_f),
-      hjust = 0, size = 3.5, show.legend = FALSE) +
+      hjust = 0, size = 4.5, show.legend = FALSE) +
     ggplot2::scale_color_manual(
       values = c("FALSE" = jco[2], "TRUE" = jco[1])) +
     ggplot2::scale_shape_manual(values = c("FALSE" = 21, "TRUE" = 18)) +
@@ -178,10 +178,15 @@ cox_forest_plot <- function(fp, title = "Forest plot",
       "Hazard Ratio (95% CI)",
       expand = ggplot2::expansion(mult = c(0.05, 0.3))) +
     ggplot2::labs(title = title, subtitle = subtitle, y = NULL) +
-    ggplot2::theme_classic(base_size = 12) +
+    ggplot2::theme_classic(base_size = 15) +
     ggplot2::theme(
-      plot.title    = ggplot2::element_text(hjust = 0.5, face = "bold"),
-      plot.subtitle = ggplot2::element_text(hjust = 0.5, color = "grey40"))
+      plot.title    = ggplot2::element_text(hjust = 0.5, face = "bold",
+                                            size = 17),
+      plot.subtitle = ggplot2::element_text(hjust = 0.5, color = "grey40",
+                                            size = 13),
+      axis.title.x  = ggplot2::element_text(size = 14),
+      axis.text.x   = ggplot2::element_text(size = 12, color = "grey20"),
+      axis.text.y   = ggplot2::element_text(size = 13, color = "grey10"))
 }
 
 # =============================================================================
