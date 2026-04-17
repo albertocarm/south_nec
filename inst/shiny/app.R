@@ -427,29 +427,34 @@ server <- function(input, output, session) {
   # preserved as label and as the key of the prior list passed to Stan.
   safe_id  <- function(v) gsub(":", "__x__", v, fixed = TRUE)
   TIGHT_VARS <- c("ki67_percent", "periop_therapy")
-  default_prior_for_var <- function(v) {
+  default_prior_for_var <- function(v, component = c("clonogenic", "kinetic")) {
+    component <- match.arg(component)
+    if (component == "clonogenic") return(2.5)
     parts <- strsplit(v, ":", fixed = TRUE)[[1]]
-    if (any(parts %in% TIGHT_VARS))     return(0.25)
+    if (any(parts %in% TIGHT_VARS))      return(0.25)
     if (any(parts %in% CONTINUOUS_VARS)) return(1.0)
     2.5
   }
 
   build_prior_inputs <- function(id_prefix, selected_vars,
-                                 interaction_term = NULL) {
+                                 interaction_term = NULL,
+                                 component = c("clonogenic", "kinetic")) {
+    component <- match.arg(component)
     if (length(selected_vars) == 0) {
       return(helpText("Select at least one main effect."))
     }
     rows <- lapply(selected_vars, function(v) {
       numericInput(paste0(id_prefix, safe_id(v)),
                    label = v,
-                   value = default_prior_for_var(v),
+                   value = default_prior_for_var(v, component),
                    step  = 0.1, min = 0.01)
     })
     if (!is.null(interaction_term)) {
       rows <- c(rows,
                 list(numericInput(paste0(id_prefix, safe_id(interaction_term)),
                                   label = interaction_term,
-                                  value = default_prior_for_var(interaction_term),
+                                  value = default_prior_for_var(interaction_term,
+                                                                component),
                                   step  = 0.1, min = 0.01)))
     }
     do.call(tagList, rows)
@@ -465,13 +470,15 @@ server <- function(input, output, session) {
   output$prior_clono_ui <- renderUI({
     build_prior_inputs("prior_clono_",
                        input$clono_vars,
-                       interaction_name())
+                       interaction_name(),
+                       component = "clonogenic")
   })
 
   output$prior_kinet_ui <- renderUI({
     build_prior_inputs("prior_kinet_",
                        input$kinet_vars,
-                       interaction_term = NULL)
+                       interaction_term = NULL,
+                       component = "kinetic")
   })
 
   collect_prior_list <- function(id_prefix, selected_vars,

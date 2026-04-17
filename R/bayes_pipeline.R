@@ -230,8 +230,12 @@ fit_cure_bayes <- function(data,
   X_names <- colnames(stats::model.matrix(clonogenic, data = dat_cc))[-1]
   Z_names <- colnames(stats::model.matrix(kinetic,    data = dat_cc))[-1]
 
+  # Default clonogenic prior: weakly-informative scalar SD 2.5 for every
+  # coefficient. Default kinetic prior: 0.25 on ki67_percent and
+  # periop_therapy (including interactions), 1.0 for other standardised
+  # continuous coefficients and 2.5 for remaining binary / categorical ones.
   if (is.null(prior_clonogenic)) {
-    prior_clonogenic <- default_prior_sds(X_names, pp$continuous)
+    prior_clonogenic <- 2.5
   }
   if (is.null(prior_kinetic)) {
     prior_kinetic <- default_prior_sds(Z_names, pp$continuous)

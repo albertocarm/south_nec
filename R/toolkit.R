@@ -139,17 +139,18 @@ prep_data <- function(df) {
 #'   columns; matching columns receive the supplied SD, the rest default
 #'   to 1.
 #'
-#' The default `prior_clonogenic` and `prior_kinetic` are named lists that
-#' set a tight SD of `0.25` on `ki67_percent` and `periop_therapy` (the
-#' covariates that tend to dominate the posterior ridge in this cure
-#' model) and leave every other coefficient at the fallback SD of `1.0`.
-#' Pass a scalar, a vector, or a custom list to override.
+#' The default `prior_clonogenic` is a shared SD of `2.5` across every
+#' coefficient (weakly informative). The default `prior_kinetic` is a
+#' named list that sets a tight SD of `0.25` on `ki67_percent` and
+#' `periop_therapy` (the covariates that tend to dominate the kinetic
+#' ridge in this cure model) and leaves every other coefficient at the
+#' fallback SD of `1.0`. Pass a scalar, a vector or a custom list to
+#' override.
 #'
 #' @return An object of class `cure_spec`.
 #' @export
 cure_model <- function(dat, clonogenic, kinetic,
-                       prior_clonogenic = list(ki67_percent   = 0.25,
-                                               periop_therapy = 0.25),
+                       prior_clonogenic = 2.5,
                        prior_kinetic    = list(ki67_percent   = 0.25,
                                                periop_therapy = 0.25),
                        prior_intercept  = 2.5,
