@@ -1028,56 +1028,196 @@ plot_contrast_cure_or <- function(cfit, var, levels, ref,
 #' Kaplan-Meier survival curve
 #'
 #' Draws a Kaplan-Meier curve from the preprocessed data. Optionally
-#' stratifies by a grouping variable. Uses the `survival` package
-#' internally.
+#' stratifies by a binary, factor or character column with any number of
+#' levels. Uses the `survival` package internally.
 #'
-#' @param dat      A `data.frame` produced by [prep_data()] (must contain
-#'                 `EFS_time` and `.status_bin`).
-#' @param strata   Optional character: name of a binary (0/1) column in `dat`
-#'                 to stratify the plot (e.g. `"periop_therapy"`).
-#' @param time_max Maximum time to display on the x-axis (default: observed
-#'                 maximum).
-#' @param xlab     X-axis label.
-#' @param ylab     Y-axis label.
-#' @param title    Plot title.
-#' @param cols     Colours for the strata (length 2 when stratified).
+#' Improvements over the simple base-R curve:
+#' shaded 95\% confidence bands, censoring tick marks, a colour-blind safe
+#' Okabe-Ito palette by default, an at-risk table beneath the plot,
+#' median EFS annotations and a log-rank `p`-value when stratified.
+#'
+#' @param dat        A `data.frame` produced by [prep_data()] (must contain
+#'                   `EFS_time` and `.status_bin`).
+#' @param strata     Optional character: name of a column in `dat` used to
+#'                   stratify the plot. Binary, factor and character columns
+#'                   are all supported.
+#' @param strata_labels Optional named character vector mapping raw stratum
+#'                   values to display labels.
+#' @param time_max   Maximum time to display on the x-axis (default: observed
+#'                   maximum, rounded up).
+#' @param xlab,ylab,title Axis labels and main title.
+#' @param cols       Vector of colours for the strata. Recycled if shorter
+#'                   than the number of strata. Default: Okabe-Ito palette.
+#' @param conf_int   If `TRUE` (default), draws 95\% confidence bands.
+#' @param risk_table If `TRUE` (default), draws a numbers-at-risk table.
+#' @param show_pvalue If `TRUE` (default when stratified), annotates the
+#'                   plot with the log-rank `p`-value.
 #' @return Invisible `survfit` object.
 #' @export
 plot_km <- function(dat,
-                    strata   = NULL,
-                    time_max = NULL,
-                    xlab     = "Time (years)",
-                    ylab     = "Event-free survival",
-                    title    = "Kaplan-Meier estimate",
-                    cols     = c("#1B4F8A", "#B8372E")) {
+                    strata        = NULL,
+                    strata_labels = NULL,
+                    time_max      = NULL,
+                    xlab          = "Time (years)",
+                    ylab          = "Event-free survival",
+                    title         = "Kaplan-Meier estimate",
+                    cols          = c("#0072B2", "#D55E00", "#009E73",
+                                      "#CC79A7", "#F0E442", "#56B4E9",
+                                      "#E69F00", "#999999"),
+                    conf_int      = TRUE,
+                    risk_table    = TRUE,
+                    show_pvalue   = TRUE) {
 
   if (!all(c("EFS_time", ".status_bin") %in% names(dat)))
     stop("dat must contain 'EFS_time' and '.status_bin' (use prep_data()).")
 
-  opar <- par(mar = c(5, 4, 3, 1))
-  on.exit(par(opar), add = TRUE)
-
   surv_obj <- survival::Surv(dat$EFS_time, dat$.status_bin)
+  t_max    <- if (!is.null(time_max)) time_max else
+              ceiling(max(dat$EFS_time, na.rm = TRUE))
 
-  if (!is.null(strata) && strata %in% names(dat)) {
-    grp <- factor(dat[[strata]], levels = c(0, 1),
-                  labels = c(paste0(strata, " = 0"),
-                             paste0(strata, " = 1")))
+  is_strat <- !is.null(strata) && strata %in% names(dat)
+
+  if (is_strat) {
+    raw_vals <- dat[[strata]]
+    if (is.numeric(raw_vals) && all(stats::na.omit(raw_vals) %in% c(0, 1))) {
+      grp <- factor(raw_vals, levels = c(0, 1),
+                    labels = c(paste0(strata, " = 0"),
+                               paste0(strata, " = 1")))
+    } else {
+      grp <- factor(raw_vals)
+    }
+    if (!is.null(strata_labels)) {
+      hits <- intersect(levels(grp), names(strata_labels))
+      if (length(hits) > 0) {
+        new_lev <- levels(grp)
+        new_lev[match(hits, new_lev)] <- unname(strata_labels[hits])
+        levels(grp) <- new_lev
+      }
+    }
     sf <- survival::survfit(surv_obj ~ grp)
-    xlim <- if (!is.null(time_max)) c(0, time_max) else NULL
-
-    plot(sf, col = cols, lwd = 2, xlim = xlim,
-         xlab = xlab, ylab = ylab, main = title,
-         mark.time = TRUE)
-    legend("topright", legend = levels(grp), col = cols, lwd = 2, bty = "n")
   } else {
     sf <- survival::survfit(surv_obj ~ 1)
-    xlim <- if (!is.null(time_max)) c(0, time_max) else NULL
-
-    plot(sf, col = cols[1], lwd = 2, xlim = xlim,
-         xlab = xlab, ylab = ylab, main = title,
-         mark.time = TRUE)
   }
+
+  n_strata  <- if (is_strat) length(levels(grp)) else 1L
+  cols_use  <- rep_len(cols, n_strata)
+  fill_use  <- grDevices::adjustcolor(cols_use, alpha.f = 0.18)
+
+  layout_mat <- if (isTRUE(risk_table) && is_strat) {
+    matrix(c(1, 2), ncol = 1)
+  } else if (isTRUE(risk_table) && !is_strat) {
+    matrix(c(1, 2), ncol = 1)
+  } else {
+    matrix(1, ncol = 1)
+  }
+  layout_h <- if (isTRUE(risk_table)) c(4, max(1.2, 0.45 * n_strata + 0.6))
+              else 1
+  graphics::layout(layout_mat, heights = layout_h)
+
+  opar <- par(mar = c(if (isTRUE(risk_table)) 0.5 else 4.5,
+                      4.5, 3.0, 1.2),
+              mgp = c(2.4, 0.7, 0))
+  on.exit({par(opar); graphics::layout(1)}, add = TRUE)
+
+  plot(NA, xlim = c(0, t_max), ylim = c(0, 1),
+       xlab = if (isTRUE(risk_table)) "" else xlab,
+       ylab = ylab, main = title, axes = FALSE, xaxs = "i", yaxs = "i")
+  graphics::abline(h = seq(0, 1, 0.2), col = "grey92", lwd = 0.6)
+  graphics::abline(v = pretty(c(0, t_max)), col = "grey92", lwd = 0.6)
+  graphics::axis(2, at = seq(0, 1, 0.2),
+                 labels = paste0(seq(0, 100, 20), "%"), las = 1,
+                 col = "grey40", col.axis = "grey20")
+  if (!isTRUE(risk_table))
+    graphics::axis(1, col = "grey40", col.axis = "grey20")
+  graphics::box(col = "grey40")
+
+  draw_one <- function(sub_sf, col, fill) {
+    tt <- c(0, sub_sf$time)
+    ss <- c(1, sub_sf$surv)
+    lo <- c(1, sub_sf$lower)
+    hi <- c(1, sub_sf$upper)
+    if (isTRUE(conf_int)) {
+      graphics::polygon(c(tt, rev(tt)),
+                        c(pmin(pmax(lo, 0), 1), rev(pmin(pmax(hi, 0), 1))),
+                        col = fill, border = NA)
+    }
+    graphics::lines(stats::stepfun(sub_sf$time, ss), col = col, lwd = 2.4,
+                    do.points = FALSE)
+    cens <- sub_sf$time[sub_sf$n.censor > 0]
+    if (length(cens) > 0) {
+      cens_y <- stats::approx(c(0, sub_sf$time), c(1, sub_sf$surv),
+                              xout = cens, method = "constant",
+                              f = 0, rule = 2)$y
+      graphics::points(cens, cens_y, pch = 3, col = col, cex = 0.7, lwd = 1.4)
+    }
+  }
+
+  if (is_strat) {
+    sm <- summary(sf)
+    for (i in seq_along(levels(grp))) {
+      lev_name <- paste0("grp=", levels(grp)[i])
+      idx <- sm$strata == lev_name
+      sub_sf <- list(time = sm$time[idx], surv = sm$surv[idx],
+                     lower = sm$lower[idx], upper = sm$upper[idx],
+                     n.censor = sm$n.censor[idx])
+      draw_one(sub_sf, cols_use[i], fill_use[i])
+    }
+    leg_lab <- sprintf("%s (n=%d)", levels(grp), as.numeric(table(grp)))
+    graphics::legend("bottomleft", legend = leg_lab,
+                     col = cols_use, lwd = 2.4, bty = "n",
+                     inset = c(0.01, 0.02), cex = 0.95)
+
+    if (isTRUE(show_pvalue) && length(levels(grp)) >= 2) {
+      lr <- tryCatch(survival::survdiff(surv_obj ~ grp), error = function(e) NULL)
+      if (!is.null(lr)) {
+        pv <- 1 - stats::pchisq(lr$chisq, df = length(lr$n) - 1)
+        pv_lab <- if (pv < 0.001) "log-rank p < 0.001" else
+                  sprintf("log-rank p = %.3f", pv)
+        graphics::legend("topright", legend = pv_lab, bty = "n",
+                         text.col = "grey20", inset = c(0.01, 0.02),
+                         cex = 0.95)
+      }
+    }
+  } else {
+    sm <- summary(sf)
+    sub_sf <- list(time = sm$time, surv = sm$surv,
+                   lower = sm$lower, upper = sm$upper,
+                   n.censor = sm$n.censor)
+    draw_one(sub_sf, cols_use[1], fill_use[1])
+  }
+
+  if (isTRUE(risk_table)) {
+    par(mar = c(4.0, 4.5, 0.6, 1.2), mgp = c(2.4, 0.7, 0))
+    plot(NA, xlim = c(0, t_max),
+         ylim = c(0.5, n_strata + 0.5),
+         xlab = xlab, ylab = "", axes = FALSE,
+         xaxs = "i", yaxs = "i")
+    graphics::axis(1, col = "grey40", col.axis = "grey20")
+    graphics::mtext("At risk", side = 3, line = -0.5, adj = 0,
+                    cex = 0.85, col = "grey20")
+
+    risk_t <- pretty(c(0, t_max))
+    risk_t <- risk_t[risk_t <= t_max]
+
+    if (is_strat) {
+      strata_levels <- levels(grp)
+      for (i in seq_along(strata_levels)) {
+        rows_i <- dat[grp == strata_levels[i], , drop = FALSE]
+        n_at <- sapply(risk_t, function(tt) sum(rows_i$EFS_time >= tt))
+        graphics::text(risk_t, rep(n_strata - i + 1, length(risk_t)),
+                       labels = n_at, cex = 0.85, col = cols_use[i])
+        graphics::mtext(strata_levels[i], side = 2,
+                        at = n_strata - i + 1, las = 1,
+                        line = 0.4, cex = 0.78,
+                        col = cols_use[i])
+      }
+    } else {
+      n_at <- sapply(risk_t, function(tt) sum(dat$EFS_time >= tt))
+      graphics::text(risk_t, rep(1, length(risk_t)),
+                     labels = n_at, cex = 0.85, col = cols_use[1])
+    }
+  }
+
   invisible(sf)
 }
 

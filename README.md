@@ -149,6 +149,11 @@ hist(dat$ki67_percent, breaks = 20,
 
 ### 4. Kaplan-Meier curves
 
+`plot_km()` draws shaded 95% confidence bands, censoring tick marks, an
+at-risk table beneath the curves and a log-rank `p`-value when
+stratified. Stratification by binary, factor or character columns with
+any number of levels is supported.
+
 ``` r
 plot_km(dat, title = "Event-free survival (overall)")
 ```
@@ -157,19 +162,37 @@ plot_km(dat, title = "Event-free survival (overall)")
 
 ``` r
 plot_km(dat,
-        strata = "periop_therapy",
-        title  = "Event-free survival by perioperative therapy")
+        strata        = "periop_therapy",
+        strata_labels = c("periop_therapy = 0" = "No periop. chemotherapy",
+                          "periop_therapy = 1" = "Periop. chemotherapy"),
+        title         = "Event-free survival by perioperative therapy")
 ```
 
 <img src="man/figures/README-km-treatment-1.png" width="100%" />
 
 ``` r
 plot_km(dat,
-        strata = "stage_III",
-        title  = "Event-free survival by stage III")
+        strata        = "stage_III",
+        strata_labels = c("stage_III = 0" = "Stage I-II",
+                          "stage_III = 1" = "Stage III"),
+        title         = "Event-free survival by stage III")
 ```
 
 <img src="man/figures/README-km-stage-1.png" width="100%" />
+
+``` r
+# Stratify by tumour location (factor, multiple levels). Uses the original
+# primary_site factor before it is collapsed into 0/1 dummies by prep_data().
+raw <- readRDS(example_data())
+dat_site <- prep_data(raw)
+dat_site$primary_site <- factor(raw$primary_site[match(rownames(dat_site),
+                                                       rownames(raw))])
+plot_km(dat_site,
+        strata = "primary_site",
+        title  = "Event-free survival by primary tumour location")
+```
+
+<img src="man/figures/README-km-site-1.png" width="100%" />
 
 ### 5. Define and fit the cure model
 
@@ -340,15 +363,7 @@ cure_contrast(cfit, "clonogenic",
 
 ``` r
 plot_continuous_effect(cfit, x_var = "ki67_percent",
-                       fix = list(periop_therapy = 0),
-                       xlab = "Ki-67 (%)")
-```
-
-<img src="man/figures/README-plot-cure-ref-1.png" width="100%" />
-
-``` r
-plot_continuous_effect(cfit, x_var = "ki67_percent",
-                       fix = list(periop_therapy = 1),
+                       fix  = list(periop_therapy = 1),
                        xlab = "Ki-67 (%)")
 ```
 
@@ -394,6 +409,106 @@ plot_surv_curve(cfit)
 
 <img src="man/figures/README-plot-surv-1.png" width="100%" />
 
+### 12. Pairwise interaction screen (Supplementary Table A5)
+
+`screen_interactions()` fits the additive base model and one model per
+supplied pair (base + a single interaction term), then reports the
+posterior median and 95% credible interval of the interaction
+coefficient on the original (un-standardised) covariate scale, the
+probability of direction, and the LOO-CV ELPD difference relative to
+the additive base model. Results are sorted by strength of evidence.
+
+``` r
+base_clono <- ~ ki67_percent + periop_therapy + primary_surgery_yes +
+                 stage_III   + site_pancreas  + site_colorectal
+
+a5 <- screen_interactions(
+  data            = dat,
+  base_clonogenic = base_clono,
+  kinetic         = ~ ki67_percent + periop_therapy,
+  pairs = list(
+    c("ki67_percent",        "periop_therapy"),
+    c("ki67_percent",        "primary_surgery_yes"),
+    c("ki67_percent",        "site_pancreas"),
+    c("periop_therapy",      "site_pancreas"),
+    c("primary_surgery_yes", "stage_III"),
+    c("primary_surgery_yes", "site_colorectal"),
+    c("periop_therapy",      "primary_surgery_yes"),
+    c("periop_therapy",      "stage_III"),
+    c("stage_III",           "site_pancreas"),
+    c("primary_surgery_yes", "site_pancreas")
+  ),
+  labels = c(
+    "ki67_percent:periop_therapy"         = "Ki-67 \u00d7 Periop. chemotherapy",
+    "ki67_percent:primary_surgery_yes"    = "Ki-67 \u00d7 Primary surgery",
+    "ki67_percent:site_pancreas"          = "Ki-67 \u00d7 Pancreatic site",
+    "periop_therapy:site_pancreas"        = "Periop. chemo \u00d7 Pancreatic site",
+    "primary_surgery_yes:stage_III"       = "Primary surgery \u00d7 Stage III",
+    "primary_surgery_yes:site_colorectal" = "Primary surgery \u00d7 Other site",
+    "periop_therapy:primary_surgery_yes"  = "Periop. chemo \u00d7 Primary surgery",
+    "periop_therapy:stage_III"            = "Periop. chemo \u00d7 Stage III",
+    "stage_III:site_pancreas"             = "Stage III \u00d7 Pancreatic site",
+    "primary_surgery_yes:site_pancreas"   = "Primary surgery \u00d7 Pancreatic site"
+  ),
+  chains = 4, iter = 4000, warmup = 1000
+)
+
+knitr::kable(format_interaction_table(a5), align = "lrlrrl",
+             caption = "Supplementary Table A5. Pairwise interaction screen.")
+```
+
+The full screen yields the table below. Each interaction was fitted as
+a separate model and compared against the additive main-effects model
+via LOO-CV.
+
+| Interaction term                       | Coefficient | 95% CrI         | P(direction) | ΔELPD | Evidence       |
+|----------------------------------------|------------:|:----------------|-------------:|------:|:---------------|
+| Ki-67 × Periop. chemotherapy           |      −0.014 | −0.031, 0.005   |        93.5% |  −0.4 | Suggestive **  |
+| Ki-67 × Primary surgery                |      −0.011 | −0.032, 0.009   |        87.4% |  −0.5 | Suggestive *   |
+| Ki-67 × Pancreatic site                |       0.010 | −0.011, 0.032   |        84.2% |  −1.5 | Suggestive *   |
+| Periop. chemo × Pancreatic site        |       0.576 | −0.40, 1.61     |        86.8% |  −0.7 | Suggestive *   |
+| Primary surgery × Stage III            |      −1.772 | −5.24, 0.81     |        90.0% |  −0.4 | Suggestive **  |
+| Primary surgery × Other site           |      −1.051 | −2.92, 0.40     |        91.8% |  −1.6 | Suggestive **  |
+| Periop. chemo × Primary surgery        |      −0.383 | −1.40, 0.80     |        74.1% |  −0.8 | Weak           |
+| Periop. chemo × Stage III              |       0.016 | −1.57, 1.90     |        51.0% |  −2.2 | None           |
+| Stage III × Pancreatic site            |       0.158 | −1.60, 2.22     |        56.4% |  −2.6 | None           |
+| Primary surgery × Pancreatic site      |      −0.456 | −2.36, 1.06     |        70.6% |  −1.6 | Weak           |
+
+Interaction coefficients are reported on the original (unscaled)
+covariate scale. For continuous × binary interactions (e.g.,
+Ki-67 × chemotherapy) the coefficient represents the change in the
+slope of the continuous variable when the binary variable is switched
+on; for binary × binary interactions it represents the departure from
+additivity on the log-θ scale. `P(direction)` is the posterior
+probability that the interaction coefficient has the sign of its median
+(`** pd > 90%`, `* pd > 80%`). ΔELPD is the difference in expected log
+pointwise predictive density relative to the additive base model:
+negative values favour the interaction model and a difference exceeding
+twice its standard error is considered meaningful.
+
+**Comment on the interactions.** No interaction model meaningfully
+improved predictive performance over the additive specification —
+every ΔELPD is negative (favouring the simpler additive model) and well
+within `2 × SE`. The strongest signal, *Ki-67 × peri-operative
+chemotherapy* (`pd = 93.5%`), is a negative interaction on the
+log-θ scale: the slope of Ki-67 in the clonogenic linear predictor
+becomes more negative when chemotherapy is given, i.e. the cure benefit
+of chemotherapy grows with proliferation index. Conditional contrasts
+showed that chemotherapy had no detectable effect at Ki-67 ≤ 30%
+(clonogenic ratio 0.98; CrI 0.40–2.13) but progressively reduced
+clonogenic burden at higher values (Ki-67 = 70%: ratio 0.56,
+CrI 0.33–0.92; Ki-67 = 90%: ratio 0.43, CrI 0.23–0.79), corresponding
+to cure odds ratios of 4.2 and 10.6. *Primary surgery × Other site* and
+*Primary surgery × Stage III* sit at `pd ≈ 90%` but with very wide
+intervals straddling zero, so they should be read as exploratory hints
+that the surgical effect is not perfectly homogeneous across sites and
+stages rather than as confirmed effect modifiers. The remaining seven
+pairs show no meaningful evidence of departure from additivity.
+
+CrI = credible interval; ELPD = expected log pointwise predictive
+density; LOO-CV = leave-one-out cross-validation; pd = probability of
+direction; θ = expected clonogenic burden.
+
 ------------------------------------------------------------------------
 
 ## Data requirements
@@ -428,9 +543,10 @@ equivalents).
 | `summary_coefs()` | Posterior coefficient summary on the original scale |
 | `loo_fit()` | Leave-one-out cross-validation |
 | `cure_contrast()` | Compute scenario contrasts with credible intervals |
+| `screen_interactions()` / `format_interaction_table()` | Pairwise interaction screen + Supplementary Table A5 |
 | `test_correlation()` | Posterior cross-correlation between sub-models |
 | `test_censoring()` | Incremental censoring sensitivity test |
-| `plot_km()` | Kaplan-Meier survival curves (optionally stratified) |
+| `plot_km()` | Kaplan-Meier survival curves (multi-level strata, CI bands, at-risk table, log-rank `p`) |
 | `plot_continuous_effect()` | Triptych: clonogenic load, cure rate, median failure time |
 | `plot_contrast_cure_or()` | Cure odds ratio across a continuous modifier |
 | `plot_surv_curve()` | Population survival curve from the cure model |

@@ -6,37 +6,53 @@
 \usage{
 plot_km(
   dat,
-  strata = NULL,
-  time_max = NULL,
-  xlab = "Time (years)",
-  ylab = "Event-free survival",
-  title = "Kaplan-Meier estimate",
-  cols = c("#1B4F8A", "#B8372E")
+  strata        = NULL,
+  strata_labels = NULL,
+  time_max      = NULL,
+  xlab          = "Time (years)",
+  ylab          = "Event-free survival",
+  title         = "Kaplan-Meier estimate",
+  cols          = c("#0072B2", "#D55E00", "#009E73", "#CC79A7", "#F0E442",
+                    "#56B4E9", "#E69F00", "#999999"),
+  conf_int      = TRUE,
+  risk_table    = TRUE,
+  show_pvalue   = TRUE
 )
 }
 \arguments{
 \item{dat}{A `data.frame` produced by [prep_data()] (must contain
 `EFS_time` and `.status_bin`).}
 
-\item{strata}{Optional character: name of a binary (0/1) column in `dat`
-to stratify the plot (e.g. `"periop_therapy"`).}
+\item{strata}{Optional character: name of a column in `dat` used to
+stratify the plot. Binary, factor and character columns are all
+supported.}
+
+\item{strata_labels}{Optional named character vector mapping raw stratum
+values to display labels.}
 
 \item{time_max}{Maximum time to display on the x-axis (default: observed
-maximum).}
+maximum, rounded up).}
 
-\item{xlab}{X-axis label.}
+\item{xlab, ylab, title}{Axis labels and main title.}
 
-\item{ylab}{Y-axis label.}
+\item{cols}{Vector of colours for the strata. Recycled if shorter than
+the number of strata. Default: Okabe-Ito palette.}
 
-\item{title}{Plot title.}
+\item{conf_int}{If \code{TRUE} (default), draws 95\% confidence bands.}
 
-\item{cols}{Colours for the strata (length 2 when stratified).}
+\item{risk_table}{If \code{TRUE} (default), draws a numbers-at-risk
+table beneath the plot.}
+
+\item{show_pvalue}{If \code{TRUE} (default when stratified), annotates
+the plot with the log-rank \code{p}-value.}
 }
 \value{
 Invisible `survfit` object.
 }
 \description{
-Draws a Kaplan-Meier curve from the preprocessed data. Optionally
-stratifies by a grouping variable. Uses the `survival` package
-internally.
+Draws a Kaplan-Meier curve from the preprocessed data with shaded 95\%
+confidence bands, censoring tick marks, an Okabe-Ito colour-blind safe
+palette by default, an at-risk table beneath the plot and a log-rank
+\code{p}-value when stratified. Stratification by binary, factor or
+character columns with any number of levels is supported.
 }
