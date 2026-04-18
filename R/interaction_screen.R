@@ -77,8 +77,8 @@ evidence_label <- function(pd) {
 #'   interact one at a time. Defaults to all unordered pairs of the variables
 #'   appearing in `base_clonogenic`.
 #' @param labels Optional named character vector mapping `"a:b"` term names to
-#'   pretty display labels (e.g. `c("ki67_percent:periop_therapy" =
-#'   "Ki-67 \u00d7 Periop. chemotherapy")`). Both orderings are recognised.
+#'   pretty display labels (e.g. \code{c("ki67_percent:periop_therapy" =
+#'   "Ki-67 x Periop. chemotherapy")}). Both orderings are recognised.
 #' @param prior_clonogenic,prior_kinetic,prior_intercept Forwarded to
 #'   [fit_cure_bayes()]. Defaults to `NULL` so weakly-informative per-variable
 #'   priors are built automatically.
@@ -290,8 +290,8 @@ screen_interactions <- function(data,
 #' Format an `interaction_screen` result as a publication-style table
 #'
 #' Returns a `data.frame` with the same column layout as Supplementary
-#' Table A5: `Interaction term`, `Coefficient`, `95% CrI`, `P(direction)`,
-#' `\u0394ELPD`, `Evidence`.
+#' Table A5: \code{Interaction term}, \code{Coefficient}, \code{95\% CrI},
+#' \code{P(direction)}, \eqn{\Delta}\code{ELPD}, \code{Evidence}.
 #'
 #' @param x An object returned by [screen_interactions()].
 #' @param digits_coef Decimals for the coefficient and CrI bounds.
@@ -306,18 +306,20 @@ format_interaction_table <- function(x,
 
   fmt_pct <- function(p) sprintf("%.1f%%", 100 * p)
 
-  data.frame(
-    `Interaction term` = x$term,
-    Coefficient         = formatC(x$coef, format = "f", digits = digits_coef),
-    `95% CrI`           = sprintf("%s, %s",
-                                  formatC(x$lo, format = "f", digits = digits_coef),
-                                  formatC(x$hi, format = "f", digits = digits_coef)),
-    `P(direction)`      = fmt_pct(x$pd),
-    `\u0394ELPD`        = formatC(x$delta_elpd, format = "f", digits = digits_elpd),
-    Evidence            = x$evidence,
-    check.names         = FALSE,
-    stringsAsFactors    = FALSE
+  out <- data.frame(
+    interaction_term = x$term,
+    coefficient      = formatC(x$coef, format = "f", digits = digits_coef),
+    cri_95           = sprintf("%s, %s",
+                               formatC(x$lo, format = "f", digits = digits_coef),
+                               formatC(x$hi, format = "f", digits = digits_coef)),
+    p_direction      = fmt_pct(x$pd),
+    delta_elpd       = formatC(x$delta_elpd, format = "f", digits = digits_elpd),
+    evidence         = x$evidence,
+    stringsAsFactors = FALSE
   )
+  names(out) <- c("Interaction term", "Coefficient", "95% CrI",
+                  "P(direction)", "\u0394ELPD", "Evidence")
+  out
 }
 
 # -----------------------------------------------------------------------------
